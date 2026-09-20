@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, SafeAreaView, TouchableOpacity, Text, StatusBar } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { COLORS, RADIUS, SPACING } from './src/constants/theme';
 import { Language, TRANSLATIONS } from './src/constants/translations';
 import { FEATURED_SURAHS, Surah } from './src/constants/quranData';
+import { ProgressService, UserProgress, INITIAL_PROGRESS } from './src/services/progressService';
 import { Header } from './src/components/Header';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { RecitationScreen } from './src/screens/RecitationScreen';
@@ -18,6 +19,11 @@ export default function App() {
   const [currentLanguage, setCurrentLanguage] = useState<Language>('ar');
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [selectedSurah, setSelectedSurah] = useState<Surah>(FEATURED_SURAHS[0]);
+  const [progress, setProgress] = useState<UserProgress>(INITIAL_PROGRESS);
+
+  useEffect(() => {
+    return ProgressService.subscribe(setProgress);
+  }, []);
 
   const t = TRANSLATIONS[currentLanguage];
   const isAr = currentLanguage === 'ar';
@@ -82,7 +88,7 @@ export default function App() {
         <Header
           currentLanguage={currentLanguage}
           onToggleLanguage={handleToggleLanguage}
-          streakCount={7}
+          streakCount={progress.streakDays}
         />
 
         {/* Active Tab Screen */}

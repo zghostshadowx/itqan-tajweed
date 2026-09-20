@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { COLORS, SPACING, RADIUS } from '../constants/theme';
 import { Language, TRANSLATIONS } from '../constants/translations';
-import { Sparkles, Globe, Flame } from 'lucide-react-native';
+import { Globe, Flame } from 'lucide-react-native';
 
 interface HeaderProps {
   currentLanguage: Language;
@@ -23,7 +23,11 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Brand & Title */}
       <View style={[styles.brandContainer, isAr ? styles.rtlRow : styles.ltrRow, { flex: 1 }]}>
         <View style={styles.logoBadge}>
-          <Sparkles size={18} color={COLORS.gold} />
+          <Image
+            source={require('../../assets/logo.png')}
+            style={styles.logoImage}
+            resizeMode="cover"
+          />
         </View>
         <View style={[styles.textColumn, { flex: 1, marginHorizontal: 6 }]}>
           <Text style={styles.appName}>{t.appName}</Text>
@@ -89,6 +93,12 @@ const styles = StyleSheet.create({
     borderColor: COLORS.cardBorderActive,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: 36,
+    height: 36,
+    borderRadius: RADIUS.md - 1,
   },
   textColumn: {
     justifyContent: 'center',

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,7 @@ import {
   Share2,
   Key,
   Sparkles,
+  Trash2,
 } from 'lucide-react-native';
 import { AITajweedService } from '../services/aiService';
 
@@ -43,6 +44,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const [geminiKey, setGeminiKey] = useState<string>('');
   const [isKeySaved, setIsKeySaved] = useState<boolean>(false);
+
+  useEffect(() => {
+    AITajweedService.init().then((savedKey) => {
+      if (savedKey) {
+        setGeminiKey(savedKey);
+        setIsKeySaved(true);
+      }
+    });
+  }, []);
 
   const handleOpenCloudWeb = async () => {
     try {
@@ -66,7 +76,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
   };
 
-  const handleSaveGeminiKey = () => {
+  const handleOpenAiStudio = async () => {
+    try {
+      await Linking.openURL('https://aistudio.google.com/app/apikey');
+    } catch (e) {
+      console.warn('Could not open AI Studio', e);
+    }
+  };
+
+  const handleSaveGeminiKey = async () => {
     if (!geminiKey.trim()) {
       Alert.alert(
         isAr ? 'تنبيه' : 'Notice',
@@ -74,13 +92,25 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       );
       return;
     }
-    AITajweedService.setGeminiApiKey(geminiKey.trim());
+    await AITajweedService.setGeminiApiKey(geminiKey.trim());
     setIsKeySaved(true);
     Alert.alert(
-      isAr ? 'تم التفعيل' : 'Activated',
+      isAr ? 'تم التفعيل بنجاح' : 'Activated Successfully',
       isAr
-        ? 'تم ربط الذكاء الاصطناعي السحابي Google Gemini 2.5 Flash Audio بنجاح!'
-        : 'Google Gemini 2.5 Flash Audio Cloud AI activated successfully!'
+        ? 'تم حفظ وربط الذكاء الاصطناعي السحابي Google Gemini 2.5 Flash Audio بنجاح ومزامنة المفتاح!'
+        : 'Google Gemini 2.5 Flash Audio Cloud AI key saved and synced successfully!'
+    );
+  };
+
+  const handleRemoveGeminiKey = async () => {
+    await AITajweedService.setGeminiApiKey('');
+    setGeminiKey('');
+    setIsKeySaved(false);
+    Alert.alert(
+      isAr ? 'تم الحذف' : 'Removed',
+      isAr
+        ? 'تم مسح المفتاح والعودة إلى محرك التحليل الصوتي الداخلي (بدون إنترنت).'
+        : 'Key removed. Reverted to internal offline acoustic engine.'
     );
   };
 
@@ -250,6 +280,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </View>
 
         <TouchableOpacity
+          style={[styles.getKeyBtn, isAr ? styles.rtlRow : styles.ltrRow]}
+          onPress={handleOpenAiStudio}
+          activeOpacity={0.8}
+        >
+          <Key size={14} color={COLORS.gold} />
+          <Text style={styles.getKeyBtnText}>
+            {isAr
+              ? 'احصل على مفتاح مجاني من Google AI Studio (اضغط هنا)'
+              : 'Get Free Key from Google AI Studio (Tap here)'}
+          </Text>
+          <ExternalLink size={14} color={COLORS.gold} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[styles.saveKeyBtn, isKeySaved && styles.saveKeyBtnDone]}
           onPress={handleSaveGeminiKey}
           activeOpacity={0.8}
@@ -257,13 +301,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <Text style={styles.saveKeyBtnText}>
             {isKeySaved
               ? isAr
-                ? '✓ المفتاح مفعّل ومتصل بالسحابة'
-                : '✓ Key Activated & Cloud Connected'
+                ? '✓ المفتاح مفعّل ومتصل بالسحابة (اضغط للتحديث)'
+                : '✓ Key Activated & Cloud Connected (Tap to update)'
               : isAr
               ? 'حفظ وتفعيل الاتصال السحابي'
               : 'Save & Connect to Cloud'}
           </Text>
         </TouchableOpacity>
+
+        {isKeySaved && (
+          <TouchableOpacity
+            style={[styles.removeKeyBtn, isAr ? styles.rtlRow : styles.ltrRow]}
+            onPress={handleRemoveGeminiKey}
+            activeOpacity={0.8}
+          >
+            <Trash2 size={14} color={COLORS.error} />
+            <Text style={styles.removeKeyBtnText}>
+              {isAr ? 'مسح المفتاح والعودة للمحرك الداخلي' : 'Remove Key (Revert to Offline Engine)'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Privacy Policy Card */}
@@ -500,6 +557,37 @@ const styles = StyleSheet.create({
   saveKeyBtnText: {
     color: COLORS.background,
     fontSize: 12,
+    fontWeight: 'bold',
+  },
+  getKeyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(212, 175, 55, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderRadius: RADIUS.sm,
+    paddingVertical: 8,
+    paddingHorizontal: SPACING.sm,
+    marginTop: SPACING.sm,
+    gap: 8,
+  },
+  getKeyBtnText: {
+    color: COLORS.gold,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  removeKeyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: SPACING.sm,
+    paddingVertical: 6,
+    gap: 6,
+  },
+  removeKeyBtnText: {
+    color: COLORS.error,
+    fontSize: 11,
     fontWeight: 'bold',
   },
 });
