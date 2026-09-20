@@ -108,82 +108,86 @@ export const AIFeedbackCard: React.FC<AIFeedbackCardProps> = ({
       </View>
 
       {/* Section 1: Makharij (Articulation Points) Inspection */}
-      <View style={styles.sectionBox}>
-        <Text style={[styles.sectionTitle, isAr ? styles.textRight : styles.textLeft]}>
-          🎯 {t.makharijCheck}
-        </Text>
+      {report.makharijResults && report.makharijResults.length > 0 && (
+        <View style={styles.sectionBox}>
+          <Text style={[styles.sectionTitle, isAr ? styles.textRight : styles.textLeft]}>
+            🎯 {t.makharijCheck}
+          </Text>
 
-        {report.makharijResults.map((item, idx) => {
-          const isPassed = item.status === 'passed';
-          const isWarning = item.status === 'warning';
+          {report.makharijResults.map((item, idx) => {
+            const isPassed = item.status === 'passed';
+            const isWarning = item.status === 'warning';
 
-          return (
-            <View key={idx} style={styles.makhrajRow}>
-              <View style={styles.letterPill}>
-                <Text style={styles.letterText}>{item.letter}</Text>
-              </View>
-
-              <View style={styles.makhrajContent}>
-                <View style={[styles.makhrajTopRow, isAr ? styles.rtlRow : styles.ltrRow]}>
-                  <Text style={styles.makhrajZone}>
-                    {isAr ? item.makhrajZoneAr : item.makhrajZoneEn}
-                  </Text>
-                  {isPassed ? (
-                    <View style={styles.passBadge}>
-                      <CheckCircle2 size={13} color={COLORS.success} />
-                      <Text style={styles.passText}>{isAr ? 'متقن' : 'Passed'}</Text>
-                    </View>
-                  ) : isWarning ? (
-                    <View style={styles.warnBadge}>
-                      <AlertTriangle size={13} color={COLORS.warning} />
-                      <Text style={styles.warnText}>{isAr ? 'تنبيه مخرج' : 'Warning'}</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.errorBadge}>
-                      <XCircle size={13} color={COLORS.error} />
-                      <Text style={styles.errorText}>{isAr ? 'خطأ في المخرج' : 'Defect'}</Text>
-                    </View>
-                  )}
+            return (
+              <View key={idx} style={styles.makhrajRow}>
+                <View style={styles.letterPill}>
+                  <Text style={styles.letterText}>{item.letter}</Text>
                 </View>
 
-                <Text style={[styles.makhrajComment, isAr ? styles.textRight : styles.textLeft]}>
-                  {isAr ? item.commentAr : item.commentEn}
-                </Text>
+                <View style={styles.makhrajContent}>
+                  <View style={[styles.makhrajTopRow, isAr ? styles.rtlRow : styles.ltrRow]}>
+                    <Text style={styles.makhrajZone}>
+                      {isAr ? item.makhrajZoneAr : item.makhrajZoneEn}
+                    </Text>
+                    {isPassed ? (
+                      <View style={styles.passBadge}>
+                        <CheckCircle2 size={13} color={COLORS.success} />
+                        <Text style={styles.passText}>{isAr ? 'متقن' : 'Passed'}</Text>
+                      </View>
+                    ) : isWarning ? (
+                      <View style={styles.warnBadge}>
+                        <AlertTriangle size={13} color={COLORS.warning} />
+                        <Text style={styles.warnText}>{isAr ? 'تنبيه مخرج' : 'Warning'}</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.errorBadge}>
+                        <XCircle size={13} color={COLORS.error} />
+                        <Text style={styles.errorText}>{isAr ? 'خطأ في المخرج' : 'Defect'}</Text>
+                      </View>
+                    )}
+                  </View>
 
-                <Text style={[styles.makhrajTip, isAr ? styles.textRight : styles.textLeft]}>
-                  💡 {isAr ? item.anatomicalTipAr : item.anatomicalTipEn}
-                </Text>
+                  <Text style={[styles.makhrajComment, isAr ? styles.textRight : styles.textLeft]}>
+                    {isAr ? item.commentAr : item.commentEn}
+                  </Text>
+
+                  <Text style={[styles.makhrajTip, isAr ? styles.textRight : styles.textLeft]}>
+                    💡 {isAr ? item.anatomicalTipAr : item.anatomicalTipEn}
+                  </Text>
+                </View>
               </View>
-            </View>
-          );
-        })}
-      </View>
+            );
+          })}
+        </View>
+      )}
 
       {/* Section 2: Tajweed & Madd Regulations */}
-      <View style={styles.sectionBox}>
-        <Text style={[styles.sectionTitle, isAr ? styles.textRight : styles.textLeft]}>
-          📜 {t.tajweedRuleCheck}
-        </Text>
+      {report.tajweedResults && report.tajweedResults.length > 0 && (
+        <View style={styles.sectionBox}>
+          <Text style={[styles.sectionTitle, isAr ? styles.textRight : styles.textLeft]}>
+            📜 {t.tajweedRuleCheck}
+          </Text>
 
-        {report.tajweedResults.map((rule, idx) => {
-          const ruleScoreColor = getScoreColor(rule.scorePercent);
-          return (
-            <View key={idx} style={styles.tajweedRow}>
-              <View style={[styles.ruleHeader, isAr ? styles.rtlRow : styles.ltrRow]}>
-                <Text style={styles.ruleName}>
-                  {isAr ? rule.ruleNameAr : rule.ruleNameEn}
-                </Text>
-                <Text style={[styles.ruleScoreBadge, { color: ruleScoreColor, borderColor: ruleScoreColor }]}>
-                  {rule.scorePercent}%
+          {report.tajweedResults.map((rule, idx) => {
+            const ruleScoreColor = getScoreColor(rule.scorePercent);
+            return (
+              <View key={idx} style={styles.tajweedRow}>
+                <View style={[styles.ruleHeader, isAr ? styles.rtlRow : styles.ltrRow]}>
+                  <Text style={styles.ruleName}>
+                    {isAr ? rule.ruleNameAr : rule.ruleNameEn}
+                  </Text>
+                  <Text style={[styles.ruleScoreBadge, { color: ruleScoreColor, borderColor: ruleScoreColor }]}>
+                    {rule.scorePercent}%
+                  </Text>
+                </View>
+                <Text style={[styles.ruleFeedback, isAr ? styles.textRight : styles.textLeft]}>
+                  {isAr ? rule.feedbackAr : rule.feedbackEn}
                 </Text>
               </View>
-              <Text style={[styles.ruleFeedback, isAr ? styles.textRight : styles.textLeft]}>
-                {isAr ? rule.feedbackAr : rule.feedbackEn}
-              </Text>
-            </View>
-          );
-        })}
-      </View>
+            );
+          })}
+        </View>
+      )}
 
       {/* Try Again Button */}
       <TouchableOpacity
