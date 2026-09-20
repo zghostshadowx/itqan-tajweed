@@ -193,6 +193,7 @@ export class AudioService {
             const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
             if (SpeechRec) {
               const rec = new SpeechRec();
+              rec.lang = 'ar-SA';
               rec.continuous = true;
               rec.interimResults = true;
               rec.maxAlternatives = 1;

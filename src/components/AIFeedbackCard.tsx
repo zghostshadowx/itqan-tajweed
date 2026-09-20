@@ -234,6 +234,9 @@ const styles = StyleSheet.create({
     marginTop: SPACING.lg,
     borderWidth: 1.5,
     borderColor: COLORS.gold,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   rtlRow: {
     flexDirection: 'row-reverse',

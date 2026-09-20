@@ -77,11 +77,46 @@ export class AITajweedService {
   }
 
   /**
-   * Normalizes Arabic text by removing diacritics, Quranic marks, and standardizing letters.
+   * Maps common Islamic and Quranic transliterated Latin terms into Arabic script
+   * (e.g. "bismillah" -> "بسم الله", "alhamdulillah" -> "الحمد لله", "ar-rahman" -> "الرحمن").
+   */
+  public static transliterateIslamicTermsToArabic(text: string): string {
+    if (!text) return '';
+    let res = text.toLowerCase();
+
+    res = res
+      .replace(/\bbismillah(?:ir|er)?[\s-]*(?:rahman|rehman)[\s-]*(?:ir|er)?[\s-]*(?:rahim|raheem)\b/gi, 'بسم الله الرحمن الرحيم')
+      .replace(/\bbism(?:[\s-]*allah|illah|illahi)?\b/gi, 'بسم الله')
+      .replace(/\bal[\s-]*hamdulillah\b/gi, 'الحمد لله')
+      .replace(/\brabb(?:il|ul)?[\s-]*(?:'alameen|alameen|alamin|'alamin)\b/gi, 'رب العالمين')
+      .replace(/\bar[\s-]*(?:rahman|rehman)\b/gi, 'الرحمن')
+      .replace(/\bar[\s-]*(?:rahim|raheem)\b/gi, 'الرحيم')
+      .replace(/\bmaliki?[\s-]*yawm(?:id|ed)?[\s-]*deen\b/gi, 'مالك يوم الدين')
+      .replace(/\biyyaka[\s-]*na'budu\b/gi, 'إياك نعبد')
+      .replace(/\bwa[\s-]*iyyaka[\s-]*nasta'in\b/gi, 'وإياك نستعين')
+      .replace(/\bihdina[\s-]*as[\s-]*sirat[\s-]*al[\s-]*mustaqim\b/gi, 'اهدنا الصراط المستقيم')
+      .replace(/\balladhina[\s-]*an'amta[\s-]*alayhim\b/gi, 'الذين أنعمت عليهم')
+      .replace(/\bghayril[\s-]*maghdubi[\s-]*alayhim\b/gi, 'غير المغضوب عليهم')
+      .replace(/\bwa[\s-]*lad[\s-]*dallin\b/gi, 'ولا الضالين')
+      .replace(/\ballah\b/gi, 'الله')
+      .replace(/\brabb\b/gi, 'رب')
+      .replace(/\bqul\b/gi, 'قل')
+      .replace(/\ba'udhu\b/gi, 'أعوذ')
+      .replace(/\bmin[\s-]*sharri\b/gi, 'من شر')
+      .replace(/\bma[\s-]*khalaq\b/gi, 'ما خلق')
+      .replace(/\bal[\s-]*falaq\b/gi, 'الفلق')
+      .replace(/\ban[\s-]*nas\b/gi, 'الناس');
+
+    return res;
+  }
+
+  /**
+   * Normalizes Arabic text by mapping transliterations, removing diacritics, Quranic marks, and standardizing letters.
    */
   public static normalizeArabicText(text: string): string {
     if (!text) return '';
-    return text
+    const transliterated = this.transliterateIslamicTermsToArabic(text);
+    return transliterated
       // Remove diacritics / tashkeel
       .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
       // Remove Quranic annotation signs
@@ -104,23 +139,24 @@ export class AITajweedService {
 
   /**
    * Validates whether the spoken text matches the chosen target verse.
-   * If the student spoke English (e.g. "banana"), non-Arabic words, or irrelevant speech, returns false.
+   * Accurately recognizes Quranic words, transliterated Islamic terms (e.g. "bismillah"),
+   * while rejecting unrelated English/foreign words (e.g. "banana").
    */
   public static verifyRecitationMatches(spokenText: string, targetVerse: string): boolean {
     if (!spokenText || !targetVerse) return false;
 
-    // Check 1: Non-Arabic speech (Latin characters like "banana", "hello")
-    if (/[a-zA-Z]/.test(spokenText)) {
-      return false;
-    }
-
     const normSpoken = this.normalizeArabicText(spokenText);
     const normTarget = this.normalizeArabicText(targetVerse);
 
+    // If after transliteration expansion it contains no Arabic words at all, it's pure non-Quranic speech (e.g. "banana")
+    if (!/[\u0600-\u06FF]/.test(normSpoken)) {
+      return false;
+    }
+
     if (!normSpoken) return false;
 
-    const spokenWords = normSpoken.split(' ').filter((w) => w.length > 0);
-    const targetWords = normTarget.split(' ').filter((w) => w.length > 0);
+    const spokenWords = normSpoken.split(' ').filter((w) => w.length > 0 && /[\u0600-\u06FF]/.test(w));
+    const targetWords = normTarget.split(' ').filter((w) => w.length > 0 && /[\u0600-\u06FF]/.test(w));
 
     if (targetWords.length === 0) return true;
     if (spokenWords.length === 0) return false;
@@ -137,8 +173,8 @@ export class AITajweedService {
     }
 
     const matchRatio = matchedCount / targetWords.length;
-    // Must match at least 40% of the target words to be considered an authentic attempt
-    return matchRatio >= 0.4;
+    // Must match at least 35% of the target words to be considered an authentic attempt
+    return matchRatio >= 0.35;
   }
 
   private static async uriToBase64(
@@ -312,10 +348,9 @@ Respond ONLY with a JSON object matching this exact schema:
         const transcribed = (parsed.transcribedText || '').trim();
 
         // Secondary deterministic client-side validation on Gemini response
-        const hasLatin = /[a-zA-Z]/.test(transcribed);
         const isMatched = this.verifyRecitationMatches(transcribed, ayah.uthmaniText);
 
-        if (transcribed && (hasLatin || !isMatched)) {
+        if (transcribed && !isMatched) {
           parsed.overallScore = 0;
           parsed.accuracyGrade = 'failed';
           parsed.lahnAudit = {
@@ -381,33 +416,6 @@ Respond ONLY with a JSON object matching this exact schema:
         generalAdviceAr: 'اضغط على زر الميكروفون واقرأ الآية بصوت مسموع وواضح بعد استماعك للشيخ.',
         generalAdviceEn: 'Tap the mic button and recite the verse clearly after listening to the reciter.',
       };
-    }
-
-    // Strict Speech-to-Verse Check on live client transcript (e.g. from Web Speech API)
-    if (rawTranscript) {
-      const hasLatin = /[a-zA-Z]/.test(rawTranscript);
-      const isMatched = this.verifyRecitationMatches(rawTranscript, ayah.uthmaniText);
-
-      if (hasLatin || !isMatched) {
-        return {
-          overallScore: 0,
-          accuracyGrade: 'failed',
-          ayahEvaluated: ayah,
-          timestamp: new Date().toISOString(),
-          transcribedText: rawTranscript,
-          makharijResults: [],
-          tajweedResults: [],
-          lahnAudit: {
-            status: 'lahn_jali',
-            titleAr: 'خطأ جلي: الكلمات المنطوقة لا تطابق الآية المختارة 🛑',
-            titleEn: 'Major Error: Spoken Words Do Not Match Chosen Verse',
-            detailAr: `لقد نطقت: "${rawTranscript}". بينما الآية المختارة هي: "${ayah.uthmaniText}". القراءة مرفوضة تماماً لأن الكلمات لا تطابق الآية الكريمة.`,
-            detailEn: `You said: "${rawTranscript}". The chosen verse is: "${ayah.uthmaniText}". Spoken words do not match the chosen verse. Recitation rejected.`,
-          },
-          generalAdviceAr: 'يرجى قراءة الآية القرآنية المطلوبة فقط والاستماع للشيخ المقرئ قبل التسجيل.',
-          generalAdviceEn: 'Please recite only the chosen Quranic verse and listen to the reciter before recording.',
-        };
-      }
     }
 
     // Check 2: Convert Audio to Base64 & Inspect Audio Content

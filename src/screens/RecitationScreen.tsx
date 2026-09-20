@@ -372,6 +372,9 @@ const styles = StyleSheet.create({
   content: {
     padding: SPACING.md,
     paddingBottom: SPACING.xxl * 2,
+    maxWidth: 760,
+    width: '100%',
+    alignSelf: 'center',
   },
   rtlRow: {
     flexDirection: 'row-reverse',
