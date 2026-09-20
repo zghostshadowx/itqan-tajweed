@@ -16,6 +16,7 @@ import { AudioPlayerBar, ReciterKey } from '../components/AudioPlayerBar';
 import { RecitationRecorder } from '../components/RecitationRecorder';
 import { AIFeedbackCard } from '../components/AIFeedbackCard';
 import { SurahPickerModal } from '../components/SurahPickerModal';
+import { AudioService } from '../services/audioService';
 import { AITajweedService, AIEvaluationReport } from '../services/aiService';
 import { ProgressService, UserProgress, INITIAL_PROGRESS } from '../services/progressService';
 import {
@@ -106,7 +107,8 @@ export const RecitationScreen: React.FC<RecitationScreenProps> = ({
   const handleFinishRecording = async (audioUri: string | null) => {
     setIsAnalyzing(true);
     try {
-      const report = await AITajweedService.evaluateRecitation(currentAyah, audioUri);
+      const transcript = AudioService.getLastTranscript();
+      const report = await AITajweedService.evaluateRecitation(currentAyah, audioUri, transcript);
       setAiReport(report);
 
       // Record progress into persistent tracking engine (0 to 100%)

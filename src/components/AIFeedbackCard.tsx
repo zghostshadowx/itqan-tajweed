@@ -90,6 +90,30 @@ export const AIFeedbackCard: React.FC<AIFeedbackCardProps> = ({
         </View>
       </View>
 
+      {/* Speech-to-Verse Word Comparison Card */}
+      {report.transcribedText ? (
+        <View style={styles.transcriptionCard}>
+          <Text style={[styles.transcriptionLabel, isAr ? styles.textRight : styles.textLeft]}>
+            {isAr ? '🗣️ الكلمات المنطوقة التي التقطها الذكاء الاصطناعي:' : '🗣️ Spoken Words Detected by AI:'}
+          </Text>
+          <Text
+            style={[
+              styles.transcriptionSpoken,
+              isAr ? styles.textRight : styles.textLeft,
+              { color: report.overallScore === 0 ? COLORS.error : COLORS.gold },
+            ]}
+          >
+            "{report.transcribedText}"
+          </Text>
+          <Text style={[styles.targetVerseLabel, isAr ? styles.textRight : styles.textLeft]}>
+            {isAr ? '📖 الآية الكريمة المختارة للمقارنة:' : '📖 Chosen Quranic Verse to Match:'}
+          </Text>
+          <Text style={[styles.targetVerseText, isAr ? styles.textRight : styles.textLeft]}>
+            "{report.ayahEvaluated.uthmaniText}"
+          </Text>
+        </View>
+      ) : null}
+
       {/* Strict Lahn Audit Card (فحص اللحن الجلي والخفي) */}
       <View style={[styles.lahnCard, { borderColor: lahnStyle.borderColor, backgroundColor: lahnStyle.backgroundColor }]}>
         <View style={[styles.lahnHeader, isAr ? styles.rtlRow : styles.ltrRow]}>
@@ -286,6 +310,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.textSecondary,
     lineHeight: 18,
+  },
+  transcriptionCard: {
+    backgroundColor: COLORS.cardElevated,
+    borderRadius: RADIUS.md,
+    borderWidth: 1.5,
+    borderColor: COLORS.cardBorder,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  transcriptionLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  transcriptionSpoken: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginBottom: SPACING.sm,
+    letterSpacing: 0.5,
+  },
+  targetVerseLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginBottom: 2,
+    fontWeight: '600',
+  },
+  targetVerseText: {
+    fontSize: 14,
+    color: COLORS.textPrimary,
+    fontFamily: 'Amiri',
+    lineHeight: 22,
   },
   lahnCard: {
     borderRadius: RADIUS.md,

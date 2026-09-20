@@ -5,6 +5,7 @@ import { COLORS, RADIUS, SPACING } from './src/constants/theme';
 import { Language, TRANSLATIONS } from './src/constants/translations';
 import { FEATURED_SURAHS, Surah } from './src/constants/quranData';
 import { ProgressService, UserProgress, INITIAL_PROGRESS } from './src/services/progressService';
+import { AITajweedService } from './src/services/aiService';
 import { Header } from './src/components/Header';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { RecitationScreen } from './src/screens/RecitationScreen';
@@ -22,6 +23,7 @@ export default function App() {
   const [progress, setProgress] = useState<UserProgress>(INITIAL_PROGRESS);
 
   useEffect(() => {
+    AITajweedService.init();
     return ProgressService.subscribe(setProgress);
   }, []);
 

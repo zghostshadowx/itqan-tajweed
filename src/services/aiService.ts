@@ -34,6 +34,7 @@ export interface AIEvaluationReport {
   accuracyGrade: 'excellent' | 'very_good' | 'needs_practice' | 'failed';
   ayahEvaluated: Ayah;
   timestamp: string;
+  transcribedText?: string;
   makharijResults: MakhrajEvaluationItem[];
   tajweedResults: TajweedRuleEvaluationItem[];
   lahnAudit: LahnAudit;
@@ -73,6 +74,71 @@ export class AITajweedService {
     } catch (e) {
       console.warn('Error storing Gemini key:', e);
     }
+  }
+
+  /**
+   * Normalizes Arabic text by removing diacritics, Quranic marks, and standardizing letters.
+   */
+  public static normalizeArabicText(text: string): string {
+    if (!text) return '';
+    return text
+      // Remove diacritics / tashkeel
+      .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+      // Remove Quranic annotation signs
+      .replace(/[\u0610-\u061A\u06D6-\u06ED]/g, '')
+      // Standardize Alef variations (أ, إ, آ, ٱ -> ا)
+      .replace(/[أإآٱ]/g, 'ا')
+      // Standardize Taa Marbuta (ة -> ه)
+      .replace(/ة/g, 'ه')
+      // Standardize Yaa / Alif Maqsura (ى -> ي)
+      .replace(/ى/g, 'ي')
+      // Standardize Hamza on Waw / Nabrah
+      .replace(/ؤ/g, 'و')
+      .replace(/ئ/g, 'ي')
+      // Remove punctuation, brackets, symbols, english chars, digits
+      .replace(/[.,/#!$%^&*;:{}=\-_`~()؟،«»"'\d]/g, ' ')
+      // Collapse multiple whitespaces
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Validates whether the spoken text matches the chosen target verse.
+   * If the student spoke English (e.g. "banana"), non-Arabic words, or irrelevant speech, returns false.
+   */
+  public static verifyRecitationMatches(spokenText: string, targetVerse: string): boolean {
+    if (!spokenText || !targetVerse) return false;
+
+    // Check 1: Non-Arabic speech (Latin characters like "banana", "hello")
+    if (/[a-zA-Z]/.test(spokenText)) {
+      return false;
+    }
+
+    const normSpoken = this.normalizeArabicText(spokenText);
+    const normTarget = this.normalizeArabicText(targetVerse);
+
+    if (!normSpoken) return false;
+
+    const spokenWords = normSpoken.split(' ').filter((w) => w.length > 0);
+    const targetWords = normTarget.split(' ').filter((w) => w.length > 0);
+
+    if (targetWords.length === 0) return true;
+    if (spokenWords.length === 0) return false;
+
+    // Count how many target words match spoken words
+    let matchedCount = 0;
+    for (const tWord of targetWords) {
+      const found = spokenWords.some(
+        (sWord) => sWord === tWord || sWord.includes(tWord) || tWord.includes(sWord)
+      );
+      if (found) {
+        matchedCount++;
+      }
+    }
+
+    const matchRatio = matchedCount / targetWords.length;
+    // Must match at least 40% of the target words to be considered an authentic attempt
+    return matchRatio >= 0.4;
   }
 
   private static async uriToBase64(
@@ -130,27 +196,44 @@ export class AITajweedService {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.geminiApiKey}`;
         const prompt = `You are a strict, uncompromising, certified Master Sheikh of Quranic Recitation (شيخ مقرئ مجاز بالسند المتصل برواية حفص عن عاصم).
-A student has recorded their voice repeating after the reciter for this Ayah:
+A student recorded their voice reciting after the reciter for this target Quranic Ayah:
 "${ayah.uthmaniText}"
 
-CRITICAL RULE 1 - SILENCE, BACKGROUND NOISE, OR UNRELATED SPEECH:
-Listen carefully to the audio.
-If the recording contains:
-- Silence or near-silence
-- Ambient background noise only
-- Coughing, clicking, or deep breathing without reciting
-- Speech that does NOT recite the Arabic words of this Ayah ("${ayah.uthmaniText}")
-Then you MUST return overallScore: 0, accuracyGrade: "failed", and lahnAudit: { status: "lahn_jali", titleAr: "لم يتم رصد تلاوة صوتية للآية (صمت)", titleEn: "No Quranic Recitation Detected", detailAr: "التسجيل الصوتي لا يحتوي على قراءة للآية الكريمة، أو أن الصوت صامت تماماً. يرجى التحدث بوضوح في الميكروفون.", detailEn: "The recording does not contain recitation of this verse, or is silent. Please speak clearly into the microphone." }.
+MANDATORY TASK 1 - AUDIO TRANSCRIPTION:
+Listen to the student's audio recording carefully and transcribe exactly what words the student spoke into the "transcribedText" field.
+- If the student spoke in English or any non-Arabic words (for example: "banana", "hello", "testing", etc.), transcribe those exact English words into "transcribedText".
+- If the student spoke Arabic words, transcribe those exact Arabic words into "transcribedText".
+- If the audio is silent or contains only breathing or background noise, set "transcribedText" to "".
 
-CRITICAL RULE 2 - UNCOMPROMISED SCHOLARLY EVALUATION:
-If the student did recite the verse, evaluate honestly without false praise:
-1. اللحن الجلي (Major Mistake): Changing any letter (e.g. pronouncing ذ as ز or ض as ظ or ح as هـ or ث as س), changing/dropping a harakah, missing Shaddah, skipping words, or unintelligible mumbling. If present, assign score < 60 and mark status "lahn_jali".
-2. اللحن الخفي (Subtle Mistake): Cutting Madd duration below requirement, incomplete Ghunnah (< 2 counts), failing Qalqalah bounce, improper Tafkheem/Tarqeeq. If present, deduct points honestly (score 65-84) and mark status "lahn_khafi".
-3. Soundness of Makharij: Check exact anatomical origins (throat, tongue, lips, nasal cavity).
-4. If recitation is accurate according to Hafs rules, give score 88-100 and status "clean".
+MANDATORY TASK 2 - STRICT COMPARISON WITH TARGET AYAH:
+Compare what was spoken ("transcribedText") against the target Ayah ("${ayah.uthmaniText}").
+CRITICAL RULE: If the student spoke English words (e.g. "banana"), casual speech, words that do NOT match this verse, or was silent:
+You MUST return:
+- "overallScore": 0
+- "accuracyGrade": "failed"
+- "lahnAudit": {
+    "status": "lahn_jali",
+    "titleAr": "خطأ جلي: الكلمات المنطوقة لا تطابق الآية المختارة 🛑",
+    "titleEn": "Major Error: Spoken Words Do Not Match Chosen Verse",
+    "detailAr": "لقد نطقت: \\"" + (transcribedText || 'كلام غير مفهوم') + "\\" بينما الآية المطلوبة هي: \\"" + "${ayah.uthmaniText}" + "\\". القراءة مرفوضة تماماً.",
+    "detailEn": "You said: \\"" + (transcribedText || 'unrelated speech') + "\\". The target verse is: \\"" + "${ayah.uthmaniText}" + "\\". Spoken words do not match the chosen verse."
+  }
+- "makharijResults": []
+- "tajweedResults": []
+- "generalAdviceAr": "يرجى قراءة الآية القرآنية المطلوبة فقط والاستماع للشيخ المقرئ قبل التسجيل."
+- "generalAdviceEn": "Please recite only the chosen Quranic verse and listen to the reciter before recording."
+
+DO NOT AWARD ANY POINTS (> 0) IF THE SPOKEN WORDS DO NOT MATCH THE TARGET AYAH.
+
+MANDATORY TASK 3 - TAJWEED EVALUATION (ONLY IF THE RECITATION MATCHES THE AYAH):
+If and only if the student genuinely recited the words of "${ayah.uthmaniText}":
+1. اللحن الجلي (Major Mistake): Changing any letter, changing/dropping a harakah, missing Shaddah, skipping words -> score < 60, status "lahn_jali".
+2. اللحن الخفي (Subtle Mistake): Cutting Madd duration, incomplete Ghunnah (< 2 counts), failing Qalqalah bounce -> score 65-84, status "lahn_khafi".
+3. Accurate Recitation according to Hafs rules -> score 88-100, status "clean".
 
 Respond ONLY with a JSON object matching this exact schema:
 {
+  "transcribedText": "string",
   "overallScore": number (0-100),
   "accuracyGrade": "excellent" | "very_good" | "needs_practice" | "failed",
   "lahnAudit": {
@@ -205,7 +288,7 @@ Respond ONLY with a JSON object matching this exact schema:
             ],
             generationConfig: {
               responseMimeType: 'application/json',
-              temperature: 0.2,
+              temperature: 0.1,
             },
           }),
         });
@@ -226,8 +309,31 @@ Respond ONLY with a JSON object matching this exact schema:
         }
 
         const parsed = JSON.parse(cleanJson);
+        const transcribed = (parsed.transcribedText || '').trim();
+
+        // Secondary deterministic client-side validation on Gemini response
+        const hasLatin = /[a-zA-Z]/.test(transcribed);
+        const isMatched = this.verifyRecitationMatches(transcribed, ayah.uthmaniText);
+
+        if (transcribed && (hasLatin || !isMatched)) {
+          parsed.overallScore = 0;
+          parsed.accuracyGrade = 'failed';
+          parsed.lahnAudit = {
+            status: 'lahn_jali',
+            titleAr: 'خطأ جلي: الكلمات المنطوقة لا تطابق الآية المختارة 🛑',
+            titleEn: 'Major Error: Spoken Words Do Not Match Chosen Verse',
+            detailAr: `لقد نطقت: "${transcribed}". بينما الآية المطلوبة هي: "${ayah.uthmaniText}". القراءة مرفوضة تماماً لمخالفتها الآية.`,
+            detailEn: `You said: "${transcribed}". The target chosen verse is: "${ayah.uthmaniText}". Spoken words do not match the chosen verse. Recitation rejected.`,
+          };
+          parsed.makharijResults = [];
+          parsed.tajweedResults = [];
+          parsed.generalAdviceAr = 'يرجى قراءة الآية القرآنية المطلوبة فقط والاستماع للشيخ المقرئ قبل التسجيل.';
+          parsed.generalAdviceEn = 'Please recite only the chosen Quranic verse and listen to the reciter before recording.';
+        }
+
         return {
           ...parsed,
+          transcribedText: transcribed,
           ayahEvaluated: ayah,
           timestamp: new Date().toISOString(),
         };
@@ -245,8 +351,16 @@ Respond ONLY with a JSON object matching this exact schema:
    */
   public static async evaluateRecitation(
     ayah: Ayah,
-    audioUri: string | null
+    audioUri: string | null,
+    clientTranscript?: string
   ): Promise<AIEvaluationReport> {
+    // Ensure Gemini key is initialized from storage if not already loaded in memory
+    if (!this.geminiApiKey) {
+      await this.init();
+    }
+
+    const rawTranscript = (clientTranscript || '').trim();
+
     // Check 1: Zero Audio / No Permission / Cancelled
     if (!audioUri) {
       return {
@@ -254,6 +368,7 @@ Respond ONLY with a JSON object matching this exact schema:
         accuracyGrade: 'failed',
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript || undefined,
         makharijResults: [],
         tajweedResults: [],
         lahnAudit: {
@@ -268,6 +383,33 @@ Respond ONLY with a JSON object matching this exact schema:
       };
     }
 
+    // Strict Speech-to-Verse Check on live client transcript (e.g. from Web Speech API)
+    if (rawTranscript) {
+      const hasLatin = /[a-zA-Z]/.test(rawTranscript);
+      const isMatched = this.verifyRecitationMatches(rawTranscript, ayah.uthmaniText);
+
+      if (hasLatin || !isMatched) {
+        return {
+          overallScore: 0,
+          accuracyGrade: 'failed',
+          ayahEvaluated: ayah,
+          timestamp: new Date().toISOString(),
+          transcribedText: rawTranscript,
+          makharijResults: [],
+          tajweedResults: [],
+          lahnAudit: {
+            status: 'lahn_jali',
+            titleAr: 'خطأ جلي: الكلمات المنطوقة لا تطابق الآية المختارة 🛑',
+            titleEn: 'Major Error: Spoken Words Do Not Match Chosen Verse',
+            detailAr: `لقد نطقت: "${rawTranscript}". بينما الآية المختارة هي: "${ayah.uthmaniText}". القراءة مرفوضة تماماً لأن الكلمات لا تطابق الآية الكريمة.`,
+            detailEn: `You said: "${rawTranscript}". The chosen verse is: "${ayah.uthmaniText}". Spoken words do not match the chosen verse. Recitation rejected.`,
+          },
+          generalAdviceAr: 'يرجى قراءة الآية القرآنية المطلوبة فقط والاستماع للشيخ المقرئ قبل التسجيل.',
+          generalAdviceEn: 'Please recite only the chosen Quranic verse and listen to the reciter before recording.',
+        };
+      }
+    }
+
     // Check 2: Convert Audio to Base64 & Inspect Audio Content
     const audioData = await this.uriToBase64(audioUri);
     if (!audioData || audioData.base64.length < 2500) {
@@ -276,6 +418,7 @@ Respond ONLY with a JSON object matching this exact schema:
         accuracyGrade: 'failed',
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript || undefined,
         makharijResults: [],
         tajweedResults: [],
         lahnAudit: {
@@ -290,7 +433,7 @@ Respond ONLY with a JSON object matching this exact schema:
       };
     }
 
-    // If Gemini key is configured, attempt Cloud AI evaluation first
+    // If Gemini key is configured, attempt Cloud AI evaluation
     if (this.geminiApiKey) {
       try {
         const geminiReport = await this.evaluateWithGemini(
@@ -298,14 +441,65 @@ Respond ONLY with a JSON object matching this exact schema:
           audioData.base64,
           audioData.mimeType
         );
-        if (geminiReport) return geminiReport;
+        if (geminiReport) {
+          if (!geminiReport.transcribedText && rawTranscript) {
+            geminiReport.transcribedText = rawTranscript;
+          }
+          return geminiReport;
+        }
       } catch (err) {
         console.warn('Gemini cloud evaluation fallback to local:', err);
       }
     }
 
-    // Acoustic processing delay for realistic on-device analysis
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Failsafe Guard: If no Gemini API key is configured and words cannot be verified
+    if (!this.geminiApiKey) {
+      return {
+        overallScore: 0,
+        accuracyGrade: 'failed',
+        ayahEvaluated: ayah,
+        timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript || undefined,
+        makharijResults: [],
+        tajweedResults: [],
+        lahnAudit: {
+          status: 'lahn_jali',
+          titleAr: 'مطلوب تفعيل مفتاح Gemini السحابي 🔑',
+          titleEn: 'Cloud AI Key Required for Verse Verification',
+          detailAr: 'لتدقيق كلمات التلاوة ومقارنتها بالآية المختارة بالذكاء الاصطناعي، يرجى تفعيل مفتاح Google Gemini المجاني في شاشة الإعدادات.',
+          detailEn: 'To transcribe and strictly verify your spoken words against the chosen verse, please enter your free Google Gemini API key in Settings.',
+        },
+        generalAdviceAr: 'انتقل إلى شاشة الإعدادات وفعّل مفتاح Google Gemini API المجاني لتمكين تدقيق التلاوة الصوتي المباشر.',
+        generalAdviceEn: 'Go to Settings and add your free Google Gemini API key to enable speech-to-verse verification.',
+      };
+    }
+
+    // If Gemini was unreachable, verify whether we have a confirmed matching client transcript
+    const isClientVerified = rawTranscript && this.verifyRecitationMatches(rawTranscript, ayah.uthmaniText);
+
+    if (!isClientVerified) {
+      return {
+        overallScore: 0,
+        accuracyGrade: 'failed',
+        ayahEvaluated: ayah,
+        timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript || undefined,
+        makharijResults: [],
+        tajweedResults: [],
+        lahnAudit: {
+          status: 'lahn_jali',
+          titleAr: 'تعذر التحقق من كلمات التلاوة سحابياً ⚠️',
+          titleEn: 'Could Not Verify Recitation via Cloud AI',
+          detailAr: 'تعذر الاتصال بخدمة Google Gemini السحابية لتدقيق كلمات التلاوة. يرجى التأكد من صحة مفتاح API واتصال الإنترنت.',
+          detailEn: 'Could not connect to Google Gemini to transcribe and verify recitation against the chosen verse. Please check your API key and network connection.',
+        },
+        generalAdviceAr: 'تأكد من صحة مفتاح Gemini API ومن اتصال الإنترنت وأعد المحاولة.',
+        generalAdviceEn: 'Verify your Gemini API key in Settings and check your internet connection before retrying.',
+      };
+    }
+
+    // Acoustic processing delay for verified on-device recitation
+    await new Promise((resolve) => setTimeout(resolve, 800));
 
     const wordCount = ayah.uthmaniText.split(' ').length;
     const audioBytes = audioData.base64.length;
@@ -400,6 +594,7 @@ Respond ONLY with a JSON object matching this exact schema:
         accuracyGrade: grade,
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript,
         makharijResults,
         tajweedResults,
         lahnAudit: {
@@ -459,6 +654,7 @@ Respond ONLY with a JSON object matching this exact schema:
         accuracyGrade: 'needs_practice',
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript,
         makharijResults,
         tajweedResults,
         lahnAudit: {
@@ -508,6 +704,7 @@ Respond ONLY with a JSON object matching this exact schema:
         accuracyGrade: 'very_good',
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript,
         makharijResults,
         tajweedResults,
         lahnAudit: {
@@ -557,6 +754,7 @@ Respond ONLY with a JSON object matching this exact schema:
         accuracyGrade: 'excellent',
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript,
         makharijResults,
         tajweedResults,
         lahnAudit: {
@@ -606,6 +804,7 @@ Respond ONLY with a JSON object matching this exact schema:
         accuracyGrade: 'very_good',
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
+        transcribedText: rawTranscript,
         makharijResults,
         tajweedResults,
         lahnAudit: {

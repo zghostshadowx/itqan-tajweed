@@ -13,6 +13,12 @@ export class AudioService {
   private static webAnalyser: any = null;
   private static webAnimId: any = null;
   private static recordingStartTime: number = 0;
+  private static webSpeechRecognition: any = null;
+  private static lastTranscript: string = '';
+
+  public static getLastTranscript(): string {
+    return this.lastTranscript;
+  }
 
   public static async initAudio(): Promise<boolean> {
     try {
@@ -180,6 +186,33 @@ export class AudioService {
             else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
           }
 
+          this.lastTranscript = '';
+
+          // Web Speech Recognition for real-time speech-to-verse transcripts
+          try {
+            const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+            if (SpeechRec) {
+              const rec = new SpeechRec();
+              rec.continuous = true;
+              rec.interimResults = true;
+              rec.maxAlternatives = 1;
+              rec.onresult = (e: any) => {
+                let full = '';
+                for (let i = 0; i < e.results.length; i++) {
+                  full += e.results[i][0].transcript + ' ';
+                }
+                this.lastTranscript = full.trim();
+              };
+              rec.onerror = (e: any) => {
+                console.warn('Speech recognition warning:', e?.error);
+              };
+              rec.start();
+              this.webSpeechRecognition = rec;
+            }
+          } catch (srErr) {
+            console.warn('SpeechRecognition initialization warning:', srErr);
+          }
+
           const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
           recorder.ondataavailable = (e: any) => {
             if (e.data && e.data.size > 0) {
@@ -219,6 +252,13 @@ export class AudioService {
           } catch (e) {}
           this.webAudioContext = null;
           this.webAnalyser = null;
+        }
+
+        if (this.webSpeechRecognition) {
+          try {
+            this.webSpeechRecognition.stop();
+          } catch (e) {}
+          this.webSpeechRecognition = null;
         }
 
         if (this.webMediaRecorder) {
