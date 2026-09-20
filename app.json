@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Itqan | إتقان",
+    "slug": "itqan-tajweed",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#061812"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.itqan.tajweed",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Itqan requires microphone access to listen to your Quranic recitation and provide real-time AI Tajweed and pronunciation correction."
+      }
+    },
+    "android": {
+      "package": "com.itqan.tajweed",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#061812"
+      },
+      "permissions": [
+        "RECORD_AUDIO",
+        "INTERNET",
+        "MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "extra": {
+      "supportsRTL": true,
+      "eas": {
+        "projectId": "itqan-tajweed-core"
+      }
+    },
+    "plugins": [
+      "expo-asset"
+    ]
+  }
+}
