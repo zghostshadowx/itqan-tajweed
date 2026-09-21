@@ -172,15 +172,15 @@ class UserProgressManager {
     const masteredLetters = Array.from(currentLettersSet);
     const makharijCount = Math.min(28, masteredLetters.length);
 
-    // Update streak logic
-    const today = new Date().toISOString().split('T')[0];
+    // Update streak logic — local date, not UTC (avoids cross-midnight streak loss)
+    const today = new Date().toLocaleDateString('en-CA');
     let newStreak = this.currentProgress.streakDays;
     const lastDate = this.currentProgress.lastActiveDate;
 
     if (!lastDate) {
       newStreak = 1;
     } else if (lastDate !== today) {
-      const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+      const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-CA');
       if (lastDate === yesterday) {
         newStreak += 1;
       } else {

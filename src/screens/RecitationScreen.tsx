@@ -111,8 +111,8 @@ export const RecitationScreen: React.FC<RecitationScreenProps> = ({
       const report = await AITajweedService.evaluateRecitation(currentAyah, audioUri, transcript);
       setAiReport(report);
 
-      // Record progress into persistent tracking engine (0 to 100%)
-      if (report) {
+      // Record progress only for genuine evaluations; failed ones score 0
+      if (report && report.overallScore > 0) {
         const passedMakharij = report.makharijResults
           ?.filter((r) => r.status === 'passed')
           ?.map((r) => r.letter) || [];

@@ -3,6 +3,9 @@ import { TajweedSegment } from '../constants/quranData';
 // Letters of Qalqalah: قطب جد
 const QALQALAH_LETTERS = new Set(['ق', 'ط', 'ب', 'ج', 'د']);
 
+// Characters marking an elongation (madd): maddah ٓ, alef-madda آ, dagger alif ٰ
+const MADD_MARKS = /[ٓ~آٰ]/;
+
 // Letters of Ikhfa: ت ث ج د ذ ز س ش ص ض ط ظ ف ق ك
 const IKHFA_LETTERS = new Set(['ت', 'ث', 'ج', 'د', 'ذ', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ف', 'ق', 'ك']);
 
@@ -43,16 +46,16 @@ export function parseUniversalTajweed(text: string): TajweedSegment[] {
         }
       }
     }
-    // Rule 2: Madd marks (Maddah ٓ, or long vowels before pause)
-    else if (word.includes('ٓ') || word.includes('~')) {
-      const parts = word.split(/([^\s]*[ٓ~][^\s]*)/g);
+    // Rule 2: Madd marks (maddah, alef-madda, dagger alif, tilde)
+    else if (MADD_MARKS.test(word)) {
+      const parts = word.split(/([^\s]*[ٓ~آٰ][^\s]*)/g);
       for (const part of parts) {
-        if (part.includes('ٓ') || part.includes('~')) {
+        if (MADD_MARKS.test(part)) {
           wordSegments.push({
             text: part,
             rule: 'madd',
-            explanationAr: 'مد واجب متصل أو جائز منفصل (4 أو 5 حركات)',
-            explanationEn: 'Obligatory or Permissible Madd (4-5 counts)',
+            explanationAr: 'مدّ: أطِل الحرف حسب نوع المد في موضعك (حركتان أو أكثر حتى 6)',
+            explanationEn: 'Madd: elongate this letter per its rule (2 counts or more, up to 6)',
           });
         } else if (part.length > 0) {
           wordSegments.push({ text: part, rule: 'normal' });
