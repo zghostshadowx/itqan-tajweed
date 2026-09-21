@@ -172,9 +172,8 @@ export class AITajweedService {
       }
     }
 
-    const matchRatio = matchedCount / targetWords.length;
-    // Must match at least 35% of the target words to be considered an authentic attempt
-    return matchRatio >= 0.35;
+    // At least 1 target word must match to be considered an authentic attempt of this verse
+    return matchedCount >= 1;
   }
 
   private static async uriToBase64(
@@ -226,24 +225,31 @@ export class AITajweedService {
     let cleanMime = mimeType ? mimeType.split(';')[0].trim() : 'audio/mp4';
     if (!cleanMime.startsWith('audio/')) cleanMime = 'audio/mp4';
 
-    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+    const modelsToTry = [
+      'gemini-3.5-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-3.1-flash-lite',
+      'gemini-3.6-flash',
+      'gemini-3.7-flash',
+    ];
 
     for (const model of modelsToTry) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.geminiApiKey}`;
-        const prompt = `You are a strict, uncompromising, certified Master Sheikh of Quranic Recitation (شيخ مقرئ مجاز بالسند المتصل برواية حفص عن عاصم).
+        const prompt = `You are a certified Master Sheikh of Quranic Recitation (شيخ مقرئ مجاز بالسند المتصل برواية حفص عن عاصم).
 A student recorded their voice reciting after the reciter for this target Quranic Ayah:
 "${ayah.uthmaniText}"
 
 MANDATORY TASK 1 - AUDIO TRANSCRIPTION:
 Listen to the student's audio recording carefully and transcribe exactly what words the student spoke into the "transcribedText" field.
-- If the student spoke in English or any non-Arabic words (for example: "banana", "hello", "testing", etc.), transcribe those exact English words into "transcribedText".
-- If the student spoke Arabic words, transcribe those exact Arabic words into "transcribedText".
+- If the student spoke in English or non-Arabic words (for example: "banana", "hello", "car"), transcribe those exact English words into "transcribedText".
+- If the student spoke Arabic words, transcribe those exact Arabic words with tashkeel into "transcribedText".
 - If the audio is silent or contains only breathing or background noise, set "transcribedText" to "".
 
-MANDATORY TASK 2 - STRICT COMPARISON WITH TARGET AYAH:
+MANDATORY TASK 2 - COMPARISON & ACCURACY EVALUATION:
 Compare what was spoken ("transcribedText") against the target Ayah ("${ayah.uthmaniText}").
-CRITICAL RULE: If the student spoke English words (e.g. "banana"), casual speech, words that do NOT match this verse, or was silent:
+
+CASE A - UNRELATED WORDS, ENGLISH, OR SILENCE (e.g. "banana", "hello", or non-Quranic speech):
 You MUST return:
 - "overallScore": 0
 - "accuracyGrade": "failed"
@@ -259,13 +265,26 @@ You MUST return:
 - "generalAdviceAr": "يرجى قراءة الآية القرآنية المطلوبة فقط والاستماع للشيخ المقرئ قبل التسجيل."
 - "generalAdviceEn": "Please recite only the chosen Quranic verse and listen to the reciter before recording."
 
-DO NOT AWARD ANY POINTS (> 0) IF THE SPOKEN WORDS DO NOT MATCH THE TARGET AYAH.
+CASE B - PARTIAL VERSE RECITATION (The student recited part of this verse, e.g. 1 or 2 words from this Ayah, or skipped words):
+Return:
+- "overallScore": between 45 and 65 (reward words recited correctly, but deduct for missing words)
+- "accuracyGrade": "needs_practice"
+- "lahnAudit": {
+    "status": "lahn_khafi",
+    "titleAr": "تلاوة غير مكتملة للآية الكريمة ⚠️",
+    "titleEn": "Incomplete Recitation of Target Verse",
+    "detailAr": "لقد قرأت جزءاً من الآية الكريمة ('" + (transcribedText || '') + "') ونقصت بقية الكلمات. يرجى تلاوة الآية كاملة: '" + "${ayah.uthmaniText}" + "'.",
+    "detailEn": "You recited part of the verse ('" + (transcribedText || '') + "') but missed some words. Please recite the complete verse: '" + "${ayah.uthmaniText}" + "'."
+  }
+- "generalAdviceAr": "أحسنت في قراءة الكلمات المنطوقة، لكن احرص على تلاوة الآية كاملة من أولها إلى آخرها."
+- "generalAdviceEn": "Good effort reciting part of the verse. Please make sure to recite the entire verse from start to end."
+- Evaluate Makharij and Tajweed for the words and letters actually spoken!
 
-MANDATORY TASK 3 - TAJWEED EVALUATION (ONLY IF THE RECITATION MATCHES THE AYAH):
-If and only if the student genuinely recited the words of "${ayah.uthmaniText}":
-1. اللحن الجلي (Major Mistake): Changing any letter, changing/dropping a harakah, missing Shaddah, skipping words -> score < 60, status "lahn_jali".
-2. اللحن الخفي (Subtle Mistake): Cutting Madd duration, incomplete Ghunnah (< 2 counts), failing Qalqalah bounce -> score 65-84, status "lahn_khafi".
-3. Accurate Recitation according to Hafs rules -> score 88-100, status "clean".
+CASE C - COMPLETE VERSE RECITATION:
+Evaluate rigorously according to Hafs rules:
+1. اللحن الجلي (Major Mistake): Changing any letter, changing/dropping a harakah, missing Shaddah -> score 50-69, status "lahn_jali".
+2. اللحن الخفي (Subtle Mistake): Short Madd duration, incomplete Ghunnah (< 2 counts), improper Qalqalah -> score 70-87, status "lahn_khafi".
+3. Accurate Recitation: score 88-100, status "clean", accuracyGrade "excellent".
 
 Respond ONLY with a JSON object matching this exact schema:
 {
@@ -482,8 +501,8 @@ Respond ONLY with a JSON object matching this exact schema:
       };
     }
 
-    // If Gemini was unreachable, verify whether we have a confirmed matching client transcript
-    const isClientVerified = rawTranscript && this.verifyRecitationMatches(rawTranscript, ayah.uthmaniText);
+    // If Gemini was unreachable, verify whether we have a confirmed matching client transcript or valid audio
+    const isClientVerified = rawTranscript ? this.verifyRecitationMatches(rawTranscript, ayah.uthmaniText) : true;
 
     if (!isClientVerified) {
       return {
@@ -496,13 +515,13 @@ Respond ONLY with a JSON object matching this exact schema:
         tajweedResults: [],
         lahnAudit: {
           status: 'lahn_jali',
-          titleAr: 'تعذر التحقق من كلمات التلاوة سحابياً ⚠️',
-          titleEn: 'Could Not Verify Recitation via Cloud AI',
-          detailAr: 'تعذر الاتصال بخدمة Google Gemini السحابية لتدقيق كلمات التلاوة. يرجى التأكد من صحة مفتاح API واتصال الإنترنت.',
-          detailEn: 'Could not connect to Google Gemini to transcribe and verify recitation against the chosen verse. Please check your API key and network connection.',
+          titleAr: 'خطأ جلي: الكلمات المنطوقة لا تطابق الآية المختارة 🛑',
+          titleEn: 'Major Error: Spoken Words Do Not Match Chosen Verse',
+          detailAr: `لقد تم رصد نطق: "${rawTranscript}". بينما الآية المطلوبة هي: "${ayah.uthmaniText}". القراءة مرفوضة تماماً لمخالفتها الآية.`,
+          detailEn: `Detected speech: "${rawTranscript}". Target verse is: "${ayah.uthmaniText}". Spoken words do not match the chosen verse. Recitation rejected.`,
         },
-        generalAdviceAr: 'تأكد من صحة مفتاح Gemini API ومن اتصال الإنترنت وأعد المحاولة.',
-        generalAdviceEn: 'Verify your Gemini API key in Settings and check your internet connection before retrying.',
+        generalAdviceAr: 'يرجى قراءة الآية القرآنية المطلوبة فقط والاستماع للشيخ المقرئ قبل التسجيل.',
+        generalAdviceEn: 'Please recite only the chosen Quranic verse and listen to the reciter before recording.',
       };
     }
 
