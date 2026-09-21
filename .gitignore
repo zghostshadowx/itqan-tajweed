@@ -2,9 +2,17 @@ node_modules/
 .expo/
 dist/
 dist_android/
+# Web build output stays out of git (rebuildable via npx expo export --platform web)
+dist_web/
+dist_web_test/
 npm-debug.*
 yarn-error.*
 android/app/build/
 android/.gradle/
 android/local.properties
 .DS_Store
+# Full-screen screenshots taken during development (phone_screen*.png)
+phone_screen*.png
+android/app/src/main/assets/index.android.bundle
+android/app/src/main/assets/assets/
+

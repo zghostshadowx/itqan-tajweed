@@ -183,8 +183,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </View>
         <Text style={[styles.descText, isAr ? styles.textRight : styles.textLeft]}>
           {isAr
-            ? 'يستخدم التطبيق الميكروفون لتحليل مخارج الحروف وقواعد التجويد فورياً. لا يتم مشاركة أو بيع التسجيلات الصوتية مطلقاً، وتتم معالجة التلاوة لحساب درجة الإتقان فقط.'
-            : 'Itqan utilizes microphone input exclusively for real-time articulation and Tajweed scoring. Your audio is private, encrypted, and never sold.'}
+            ? 'يستخدم التطبيق الميكروفون لتحليل تلاوتك وحساب درجة الإتقان فقط. عند تفعيل الذكاء السحابي، يُرسَل التسجيل إلى Google Gemini للتحليل دون تخزينه، ويمكنك إيقاف الذكاء السحابي ليبقى كل شيء على جهازك.'
+            : 'Itqan uses your microphone only to score your recitation. With Cloud AI enabled in Settings, your recording is sent to Google Gemini for analysis and is not stored by Itqan. Turn Cloud AI off to keep all processing on your device.'}
         </Text>
       </View>
 
@@ -207,7 +207,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
         <View style={[styles.infoRow, isAr ? styles.rtlRow : styles.ltrRow]}>
           <Text style={styles.infoLabel}>{isAr ? 'المحرك الذكي:' : 'AI Engine:'}</Text>
-          <Text style={styles.infoValue}>Itqan Neural Acoustic v2.5</Text>
+          <Text style={styles.infoValue}>{isAr ? 'محرّك Gemini من Google (سحابي)' : 'Google Gemini (cloud)'}</Text>
         </View>
       </View>
 
@@ -219,11 +219,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             {isAr ? 'النسخة السحابية المباشرة (Cloud Web)' : 'Live Cloud Web App'}
           </Text>
         </View>
-        <Text style={[styles.descText, isAr ? styles.textRight : styles.textLeft]}>
-          {isAr
-            ? 'تطبيق إتقان منشور مباشرة على الكلاود، يعمل 24/7 دون الحاجة لتشغيل جهاز الكمبيوتر، ويمكنك فتحه أو مشاركته مع أي شخص حول العالم:'
-            : 'Itqan is deployed live to the cloud, accessible 24/7 without needing your PC online. Open it on any browser or share it globally:'}
-        </Text>
         <Text style={[styles.cloudUrlText, isAr ? styles.textRight : styles.textLeft]}>
           https://itqan-tajweed.surge.sh
         </Text>

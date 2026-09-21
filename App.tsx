@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, SafeAreaView, TouchableOpacity, Text, StatusBar } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { COLORS, RADIUS, SPACING } from './src/constants/theme';
 import { Language, TRANSLATIONS } from './src/constants/translations';
@@ -16,6 +17,8 @@ import { Home, Mic, Activity, BookOpen, Settings } from 'lucide-react-native';
 
 export type TabType = 'home' | 'recite' | 'makharij' | 'academy' | 'settings';
 
+const LANGUAGE_STORAGE_KEY = '@itqan_language_pref';
+
 export default function App() {
   const [currentLanguage, setCurrentLanguage] = useState<Language>('ar');
   const [activeTab, setActiveTab] = useState<TabType>('home');
@@ -23,6 +26,14 @@ export default function App() {
   const [progress, setProgress] = useState<UserProgress>(INITIAL_PROGRESS);
 
   useEffect(() => {
+    AsyncStorage.getItem(LANGUAGE_STORAGE_KEY)
+      .then((saved) => {
+        if (saved === 'ar' || saved === 'en') {
+          setCurrentLanguage(saved);
+        }
+      })
+      .catch(() => {});
+
     AITajweedService.init();
     return ProgressService.subscribe(setProgress);
   }, []);
@@ -30,8 +41,14 @@ export default function App() {
   const t = TRANSLATIONS[currentLanguage];
   const isAr = currentLanguage === 'ar';
 
+  const handleSetLanguage = (lang: Language) => {
+    setCurrentLanguage(lang);
+    AsyncStorage.setItem(LANGUAGE_STORAGE_KEY, lang).catch(() => {});
+  };
+
   const handleToggleLanguage = () => {
-    setCurrentLanguage((prev) => (prev === 'ar' ? 'en' : 'ar'));
+    const nextLang: Language = currentLanguage === 'ar' ? 'en' : 'ar';
+    handleSetLanguage(nextLang);
   };
 
   const handleSelectSurah = (surah: Surah) => {
@@ -66,7 +83,7 @@ export default function App() {
         return (
           <SettingsScreen
             currentLanguage={currentLanguage}
-            onSetLanguage={setCurrentLanguage}
+            onSetLanguage={handleSetLanguage}
           />
         );
       default:
