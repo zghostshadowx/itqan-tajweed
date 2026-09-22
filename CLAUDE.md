@@ -16,3 +16,8 @@
 
 ### 3. Always Update Memory & Data Vault
 - Persist structured reports and progress logs directly to `E:\bro\memory\brain.json` and the Obsidian Data Vault (`E:\Bro Brain 2\Bro Brain`).
+
+### 4. Explicit Goal Termination (NO INFINITE LOOPS)
+- When running under `/goal`, once tasks are completed, the agent MUST immediately output `<!-- GOAL_COMPLETE -->` and end the turn.
+- NEVER run continuous open-ended audit or inspection loops.
+

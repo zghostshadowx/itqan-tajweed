@@ -129,7 +129,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <Text style={styles.bannerTitle}>{t.appName}</Text>
           <Text style={styles.bannerSubtitle}>{t.appSubtitle}</Text>
           <View style={styles.versionPill}>
-            <Text style={styles.versionText}>v1.0.0 • AI Tajweed Edition</Text>
+            <Text style={styles.versionText}>v1.0.1 • AI Tajweed Edition</Text>
           </View>
         </View>
       </View>
@@ -202,7 +202,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
         <View style={[styles.infoRow, isAr ? styles.rtlRow : styles.ltrRow]}>
           <Text style={styles.infoLabel}>{isAr ? 'الإصدار:' : 'Version:'}</Text>
-          <Text style={styles.infoValue}>1.0.0 (Release Build 1)</Text>
+          <Text style={styles.infoValue}>1.0.1 (Release Build 2)</Text>
         </View>
 
         <View style={[styles.infoRow, isAr ? styles.rtlRow : styles.ltrRow]}>
