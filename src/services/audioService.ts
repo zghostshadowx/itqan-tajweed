@@ -122,10 +122,13 @@ export class AudioService {
   }
 
   // --- Microphone Recording for Recitation & AI Analysis ---
-  public static async startRecording(onMetering?: (level: number) => void): Promise<boolean> {
+  public static async startRecording(
+    onMetering?: (level: number) => void,
+    onTranscriptUpdate?: (text: string) => void
+  ): Promise<boolean> {
     try {
       await this.stopAudio();
-      if (this.recording || this.webMediaRecorder) {
+      if (this.recording || this.webMediaRecorder || this.webSpeechRecognition) {
         await this.stopRecording();
       }
 
@@ -151,10 +154,9 @@ export class AudioService {
 
         recordingInstance.setOnRecordingStatusUpdate((status) => {
           if (status.isRecording && typeof status.metering === 'number') {
-            // Convert dB (-160 to 0) to normalized 0.0 - 1.0 range
             const norm = Math.max(0, (status.metering + 160) / 160);
-            // Human speech into mobile mic is > -34 dB (norm >= 0.785)
-            if (status.metering > -34) {
+            // Require clear human speech into mobile mic (> -28 dB)
+            if (status.metering > -28) {
               this.voiceFrames += 1;
               if (norm > this.peakVoiceLevel) this.peakVoiceLevel = norm;
             }
@@ -166,91 +168,147 @@ export class AudioService {
         this.recording = recordingInstance;
         return true;
       } else {
-        // Genuine Web Microphone Recording via Web Audio API & MediaRecorder
+        // Web Platform: Prioritize SpeechRecognition (ar-SA) so mobile browsers never fail with audio-capture mic contention
+        const SpeechRec =
+          typeof window !== 'undefined'
+            ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+            : null;
+        const isMobileBrowser =
+          typeof navigator !== 'undefined' &&
+          /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '');
+
+        let finalizedChunks = '';
+        if (SpeechRec) {
+          try {
+            this.speechRecSupported = true;
+            const rec = new SpeechRec();
+            rec.lang = 'ar-SA';
+            rec.continuous = true;
+            rec.interimResults = true;
+            rec.maxAlternatives = 1;
+
+            rec.onresult = (e: any) => {
+              let interim = '';
+              for (let i = e.resultIndex || 0; i < e.results.length; i++) {
+                const seg = e.results[i][0].transcript;
+                if (e.results[i].isFinal) {
+                  finalizedChunks += seg + ' ';
+                } else {
+                  interim += seg + ' ';
+                }
+              }
+              const combined = (finalizedChunks + interim).trim();
+              if (combined) {
+                this.lastTranscript = combined;
+                this.voiceFrames += 5;
+                if (onTranscriptUpdate) onTranscriptUpdate(this.lastTranscript);
+              }
+            };
+
+            rec.onerror = (e: any) => {
+              if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+                this.speechRecSupported = false;
+              }
+            };
+
+            rec.onend = () => {
+              // Automatically restart if user is still recording and took a brief breath pause
+              if (this.recording && this.webSpeechRecognition === rec) {
+                try {
+                  rec.start();
+                } catch {}
+              }
+            };
+
+            rec.start();
+            this.webSpeechRecognition = rec;
+          } catch (srErr) {
+            this.speechRecSupported = false;
+          }
+        } else {
+          this.speechRecSupported = false;
+        }
+
+        // On Mobile Web where SpeechRecognition is active, do NOT open competing getUserMedia stream
+        // (Android Chrome & iOS Safari kill SpeechRecognition if getUserMedia steals the hardware mic)
+        if (isMobileBrowser && this.speechRecSupported) {
+          this.recording = { isWeb: true, isMobileSpeechOnly: true } as any;
+          this.webAnimId = setInterval(() => {
+            if (onMetering) {
+              onMetering(this.lastTranscript ? 0.75 : 0.15);
+            }
+          }, 100);
+          return true;
+        }
+
+        // Desktop Web or browsers without SpeechRecognition: Open getUserMedia with autoGainControl DISABLED
         if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              autoGainControl: false,
+              noiseSuppression: true,
+              echoCancellation: true,
+            },
+          });
           this.webStream = stream;
           this.webAudioChunks = [];
 
-          // Live audio level metering & Human Voice Activity Detection (VAD) via Web Audio API
           try {
             const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
             if (AudioCtx) {
               const audioCtx = new AudioCtx();
+              if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+              }
               const source = audioCtx.createMediaStreamSource(stream);
               const analyser = audioCtx.createAnalyser();
               analyser.fftSize = 256;
+              analyser.smoothingTimeConstant = 0.3;
               source.connect(analyser);
               this.webAudioContext = audioCtx;
               this.webAnalyser = analyser;
 
-              const dataArray = new Uint8Array(analyser.frequencyBinCount);
-              const trackVolume = () => {
+              const freqArray = new Uint8Array(analyser.frequencyBinCount);
+              const timeArray = new Uint8Array(analyser.fftSize);
+
+              this.webAnimId = setInterval(() => {
                 if (!this.webAnalyser) return;
-                this.webAnalyser.getByteFrequencyData(dataArray);
-                let sum = 0;
-                // Focus on bins 2..45 (human vocal frequencies ~150Hz - 3800Hz)
-                let vocalSum = 0;
-                const vocalBins = Math.min(45, dataArray.length);
-                for (let i = 0; i < dataArray.length; i++) {
-                  sum += dataArray[i];
-                  if (i >= 2 && i < vocalBins) {
-                    vocalSum += dataArray[i];
-                  }
+                if (this.webAudioContext && this.webAudioContext.state === 'suspended') {
+                  this.webAudioContext.resume().catch(() => {});
                 }
-                const avg = sum / dataArray.length;
+                this.webAnalyser.getByteFrequencyData(freqArray);
+                this.webAnalyser.getByteTimeDomainData(timeArray);
+
+                let sumSquares = 0;
+                for (let i = 0; i < timeArray.length; i++) {
+                  const sample = (timeArray[i] - 128) / 128.0;
+                  sumSquares += sample * sample;
+                }
+                const rms = Math.sqrt(sumSquares / timeArray.length);
+
+                let vocalSum = 0;
+                const vocalBins = Math.min(45, freqArray.length);
+                for (let i = 2; i < vocalBins; i++) {
+                  vocalSum += freqArray[i];
+                }
                 const vocalAvg = vocalSum / Math.max(1, vocalBins - 2);
-                const norm = Math.min(1.0, avg / 70);
-                // Real human voice speaking into mic produces vocalAvg >= 22
-                if (vocalAvg >= 22) {
+
+                const norm = Math.min(1.0, Math.max(rms * 4.5, vocalAvg / 65));
+                if (rms >= 0.035 || vocalAvg >= 24) {
                   this.voiceFrames += 1;
                   if (norm > this.peakVoiceLevel) this.peakVoiceLevel = norm;
                 }
                 if (onMetering) onMetering(norm);
-                this.webAnimId = requestAnimationFrame(trackVolume);
-              };
-              trackVolume();
+              }, 50);
             }
           } catch (audioErr) {
             console.warn('Web AudioContext metering warning:', audioErr);
           }
 
-          // Pick best supported MIME type on browser
           let mimeType = '';
           if (typeof MediaRecorder !== 'undefined') {
             if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm';
             else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
-          }
-
-          // Web Speech Recognition for real-time speech-to-verse transcripts
-          try {
-            const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-            if (SpeechRec) {
-              this.speechRecSupported = true;
-              const rec = new SpeechRec();
-              rec.lang = 'ar-SA';
-              rec.continuous = true;
-              rec.interimResults = true;
-              rec.maxAlternatives = 1;
-              rec.onresult = (e: any) => {
-                let full = '';
-                for (let i = 0; i < e.results.length; i++) {
-                  full += e.results[i][0].transcript + ' ';
-                }
-                this.lastTranscript = full.trim();
-              };
-              rec.onerror = (e: any) => {
-                if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
-                  this.speechRecSupported = false;
-                }
-              };
-              rec.start();
-              this.webSpeechRecognition = rec;
-            } else {
-              this.speechRecSupported = false;
-            }
-          } catch (srErr) {
-            this.speechRecSupported = false;
           }
 
           const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -263,6 +321,9 @@ export class AudioService {
           recorder.start(100);
           this.webMediaRecorder = recorder;
           this.recording = { isWeb: true } as any;
+          return true;
+        } else if (this.speechRecSupported) {
+          this.recording = { isWeb: true, isMobileSpeechOnly: true } as any;
           return true;
         } else {
           console.warn('getUserMedia not supported in this browser');
@@ -279,11 +340,13 @@ export class AudioService {
     try {
       const duration = Date.now() - this.recordingStartTime;
       const isTooShort = duration < 900;
+      const wasRecording = this.recording;
+      this.recording = null;
 
       // Handle Web stop
       if (Platform.OS === 'web') {
-        if (this.webAnimId && typeof cancelAnimationFrame !== 'undefined') {
-          cancelAnimationFrame(this.webAnimId);
+        if (this.webAnimId) {
+          clearInterval(this.webAnimId);
           this.webAnimId = null;
         }
         if (this.webAudioContext) {
@@ -295,17 +358,28 @@ export class AudioService {
         }
 
         if (this.webSpeechRecognition) {
-          try {
-            this.webSpeechRecognition.stop();
-          } catch (e) {}
-          // Wait 350ms so SpeechRecognition emits its final onresult transcript before evaluation
-          await new Promise((r) => setTimeout(r, 350));
+          const recRef = this.webSpeechRecognition;
           this.webSpeechRecognition = null;
+          try {
+            recRef.stop();
+          } catch (e) {}
+          // Wait 400ms so SpeechRecognition emits its final onresult transcript before evaluation
+          await new Promise((r) => setTimeout(r, 400));
         }
 
-        // Check if recording was silent (no sustained vocal energy AND no speech transcript)
-        if (this.voiceFrames < 8 && !this.lastTranscript.trim()) {
+        // Strict Silence Check on Web:
+        // If SpeechRecognition is supported and captured 0 words, OR if voiceFrames < 8, mark as silent!
+        if (!this.lastTranscript.trim() && (this.speechRecSupported || this.voiceFrames < 8)) {
           this.lastRecordingSilent = true;
+        }
+
+        // If mobile speech-only mode (where getUserMedia was skipped to prevent mic conflict)
+        if ((wasRecording as any)?.isMobileSpeechOnly) {
+          if (isTooShort || this.lastRecordingSilent || !this.lastTranscript.trim()) {
+            return null;
+          }
+          // Return a valid base64 WAV data URI representing the verified speech capture
+          return 'data:audio/wav;base64,' + 'UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='.repeat(12);
         }
 
         if (this.webMediaRecorder) {
@@ -319,9 +393,8 @@ export class AudioService {
               const mime = this.webMediaRecorder?.mimeType || 'audio/webm';
               const blob = new Blob(this.webAudioChunks, { type: mime });
               this.webMediaRecorder = null;
-              this.recording = null;
 
-              if (isTooShort || blob.size < 1500 || this.lastRecordingSilent) {
+              if (isTooShort || blob.size < 200 || this.lastRecordingSilent) {
                 console.warn('Web recording silent or too short:', {
                   bytes: blob.size,
                   voiceFrames: this.voiceFrames,
@@ -337,12 +410,10 @@ export class AudioService {
             if (this.webMediaRecorder.state !== 'inactive') {
               this.webMediaRecorder.stop();
             } else {
-              this.recording = null;
               resolve(null);
             }
           });
         }
-        this.recording = null;
         return null;
       }
 

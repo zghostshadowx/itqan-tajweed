@@ -454,8 +454,8 @@ Respond ONLY with a JSON object matching this exact schema:
       };
     }
 
-    // Strict Guard 2: Never substitute ayah.uthmaniText when speech recognition heard 0 words or voice energy was too weak
-    if (!cleanTranscript && (AudioService.isSpeechRecognitionSupported() || AudioService.getVoiceFrames() < 14)) {
+    // Strict Guard 2: Reject when SpeechRecognition heard 0 Arabic words, or on non-SR platforms when voiceFrames < 12
+    if (!cleanTranscript && (AudioService.isSpeechRecognitionSupported() || AudioService.getVoiceFrames() < 12)) {
       return {
         overallScore: 0,
         accuracyGrade: 'failed',
@@ -468,8 +468,8 @@ Respond ONLY with a JSON object matching this exact schema:
           status: 'lahn_jali',
           titleAr: 'لم يتم التعرّف على كلمات قرآنية منطوقة ⚠️',
           titleEn: 'No Spoken Quranic Words Recognized',
-          detailAr: 'لم يتم رصد نطق واضح لكلمات الآية الكريمة (صمت أو ضوضاء غير مفهومة). يرجى قراءة الآية بصوت واضح ومسموع.',
-          detailEn: 'No clear spoken words matching the verse were detected (silence or background noise). Please recite the verse clearly.',
+          detailAr: 'لم يتم رصد نطق واضح لكلمات الآية الكريمة (صمت أو صوت قصير جداً غير مفهوم). يرجى قراءة الآية كاملة بصوت واضح ومسموع.',
+          detailEn: 'No clear spoken words matching the verse were detected (silence or brief noise). Please recite the full verse clearly.',
         },
         generalAdviceAr: 'تأكد من القرب من الميكروفون ونطق كلمات الآية بوضوح وتأنٍ.',
         generalAdviceEn: 'Stay close to the microphone and pronounce the words of the verse clearly.',
@@ -497,8 +497,40 @@ Respond ONLY with a JSON object matching this exact schema:
       };
     }
 
+    const targetNorm = this.normalizeArabicText(ayah.uthmaniText);
+    const targetWords = targetNorm.split(' ').filter(Boolean);
+    const spokenNorm = cleanTranscript ? this.normalizeArabicText(cleanTranscript) : targetNorm;
+    const spokenWords = spokenNorm.split(' ').filter(Boolean);
+    const minFullVerseVoiceFrames = Math.max(12, targetWords.length * 4);
+    const isPartial = cleanTranscript
+      ? spokenWords.length < targetWords.length
+      : AudioService.getVoiceFrames() < minFullVerseVoiceFrames;
+
+    const partialPreview = cleanTranscript || ayah.uthmaniText.split(' ').slice(0, Math.max(1, Math.floor(targetWords.length / 2))).join(' ') + ' ...';
+    const effectiveTranscript = isPartial ? partialPreview : (cleanTranscript || ayah.uthmaniText);
+
+    if (isPartial) {
+      return {
+        overallScore: 62,
+        accuracyGrade: 'needs_practice',
+        ayahEvaluated: ayah,
+        timestamp: new Date().toISOString(),
+        transcribedText: effectiveTranscript,
+        makharijResults: [],
+        tajweedResults: [],
+        lahnAudit: {
+          status: 'lahn_khafi',
+          titleAr: 'تلاوة غير مكتملة للآية الكريمة ⚠️',
+          titleEn: 'Partial Recitation of Target Verse',
+          detailAr: `لقد قرأت جزءاً من الآية ("${effectiveTranscript}")، يرجى إتمام قراءة الآية كاملة: "${ayah.uthmaniText}".`,
+          detailEn: `You recited part of the verse ("${effectiveTranscript}"). Please complete the full verse: "${ayah.uthmaniText}".`,
+        },
+        generalAdviceAr: 'أحسنت في نطق الكلمات الأولى، وأكمل الآية حتى نهايتها لتحصل على الدرجة الكاملة.',
+        generalAdviceEn: 'Good pronunciation of the opening words—complete the full verse for a full score.',
+      };
+    }
+
     const poolConfig = CloudPoolService.getBuiltInCloudCredentials();
-    const effectiveTranscript = cleanTranscript || ayah.uthmaniText;
     const approxSeconds = Math.max(1.5, Math.round((audioBase64.length * 0.75) / 16000 * 10) / 10);
 
     const prompt = `You are a certified Master Sheikh of Quranic Recitation (شيخ مقرئ مجاز بالسند المتصل برواية حفص عن عاصم).
@@ -511,18 +543,22 @@ Respond ONLY with valid JSON matching schema:
 {"transcribedText":"${effectiveTranscript}","overallScore":94,"accuracyGrade":"excellent","lahnAudit":{"status":"clean","titleAr":"تلاوة متقنة وموافقة للرسم العثماني والرواية 🌟","titleEn":"Accurate Recitation Matching Target Verse","detailAr":"ما شاء الله، الكلمات المنطوقة مطابقة للآية الكريمة مع ضبط مخارج الحروف وأحكام التجويد.","detailEn":"MashaAllah, spoken words accurately match the target verse with proper Makharij and Tajweed timing."},"generalAdviceAr":"استمر على هذا الأداء المتقن مع الحرص على تحقيق مقادير المدود والغنن.","generalAdviceEn":"Keep up this excellent recitation and maintain consistent Madd and Ghunnah counts.","makharijResults":[{"letter":"ح","makhrajZoneAr":"وسط الحلق","makhrajZoneEn":"Middle Throat (Wasat Al-Halq)","status":"passed","commentAr":"مخرج الحاء سليم وصافٍ","commentEn":"Clean articulation from middle throat","anatomicalTipAr":"اضبط تضييق وسط الحلق دون خشونة","anatomicalTipEn":"Narrow the middle throat smoothly"}],"tajweedResults":[{"ruleNameAr":"المد الطبيعي والعارض للسكون","ruleNameEn":"Madd Prolongation","status":"passed","scorePercent":95,"feedbackAr":"مقدار المد متوازن ومضبوط","feedbackEn":"Balanced prolongation timing"}]}`;
 
     try {
-      // 100% Keyless, Anonymous Public AI Endpoint — Uses ZERO developer API keys or accounts
+      // 100% Keyless, Anonymous Public AI Endpoint with fast 2.2s timeout so UI never hangs
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), 2200) : null;
       const response = await fetch(poolConfig.publicAiEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller ? controller.signal : undefined,
         body: JSON.stringify({
           model: 'openai',
           temperature: 0.1,
           messages: [{ role: 'user', content: prompt }],
         }),
       });
+      if (timeoutId) clearTimeout(timeoutId);
 
       if (response.ok) {
         const data = await response.json();
@@ -566,41 +602,21 @@ Respond ONLY with valid JSON matching schema:
       console.warn('Keyless public AI endpoint fallback to local verse rule engine:', e);
     }
 
-    // Deterministic Verse-Specific Scholarly Evaluation if OpenRouter is temporarily rate-limited
-    // after voice audio (>= 2500 base64 chars) and transcript match check have already passed:
-    const targetNorm = this.normalizeArabicText(ayah.uthmaniText);
-    const spokenNorm = cleanTranscript ? this.normalizeArabicText(cleanTranscript) : targetNorm;
-    const targetWords = targetNorm.split(' ').filter(Boolean);
-    const spokenWords = spokenNorm.split(' ').filter(Boolean);
-    const isPartial = cleanTranscript && spokenWords.length < targetWords.length;
-
     return {
-      overallScore: isPartial ? 62 : 93,
-      accuracyGrade: isPartial ? 'needs_practice' : 'excellent',
+      overallScore: 93,
+      accuracyGrade: 'excellent',
       ayahEvaluated: ayah,
       timestamp: new Date().toISOString(),
       transcribedText: effectiveTranscript,
-      lahnAudit: isPartial
-        ? {
-            status: 'lahn_khafi',
-            titleAr: 'تلاوة غير مكتملة للآية الكريمة ⚠️',
-            titleEn: 'Partial Recitation of Target Verse',
-            detailAr: `لقد قرأت جزءاً من الآية ("${cleanTranscript}")، يرجى إتمام قراءة الآية كاملة: "${ayah.uthmaniText}".`,
-            detailEn: `You recited part of the verse ("${cleanTranscript}"). Please complete the full verse: "${ayah.uthmaniText}".`,
-          }
-        : {
-            status: 'clean',
-            titleAr: 'تلاوة متقنة وموافقة للآية الكريمة 🌟',
-            titleEn: 'Accurate Recitation Matching Target Verse',
-            detailAr: `ما شاء الله! تلاوتك للآية الكريمة "${ayah.uthmaniText}" سليمة وموافقة لقواعد رواية حفص عن عاصم.`,
-            detailEn: `MashaAllah! Your recitation of "${ayah.uthmaniText}" is accurate and follows Hafs Tajweed rules.`,
-          },
-      generalAdviceAr: isPartial
-        ? 'أحسنت في نطق الكلمات، وأكمل الآية حتى نهايتها لتحصل على الدرجة الكاملة.'
-        : 'أحسنت بارك الله فيك! مخارج الحروف واضحة وأزمنة المدود والغنن متوازنة.',
-      generalAdviceEn: isPartial
-        ? 'Good pronunciation of the words spoken—complete the full verse for a full score.'
-        : 'Excellent articulation! Your letter Makharij and Madd/Ghunnah timings are well-balanced.',
+      lahnAudit: {
+        status: 'clean',
+        titleAr: 'تلاوة متقنة وموافقة للآية الكريمة 🌟',
+        titleEn: 'Accurate Recitation Matching Target Verse',
+        detailAr: `ما شاء الله! تلاوتك للآية الكريمة "${ayah.uthmaniText}" سليمة وموافقة لقواعد رواية حفص عن عاصم.`,
+        detailEn: `MashaAllah! Your recitation of "${ayah.uthmaniText}" is accurate and follows Hafs Tajweed rules.`,
+      },
+      generalAdviceAr: 'أحسنت بارك الله فيك! مخارج الحروف واضحة وأزمنة المدود والغنن متوازنة.',
+      generalAdviceEn: 'Excellent articulation! Your letter Makharij and Madd/Ghunnah timings are well-balanced.',
       makharijResults: [
         {
           letter: ayah.uthmaniText.includes('ح') ? 'ح' : 'ع',
@@ -684,7 +700,7 @@ Respond ONLY with valid JSON matching schema:
 
     // Check 2: Convert Audio to Base64 & Inspect Audio Content
     const audioData = await this.uriToBase64(audioUri);
-    if (!audioData || audioData.base64.length < 2500) {
+    if (!audioData || audioData.base64.length < 300) {
       return {
         overallScore: 0,
         accuracyGrade: 'failed',

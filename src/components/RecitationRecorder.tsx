@@ -23,6 +23,7 @@ export const RecitationRecorder: React.FC<RecitationRecorderProps> = ({
 
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [meterLevel, setMeterLevel] = useState<number>(0.3);
+  const [liveTranscript, setLiveTranscript] = useState<string>('');
 
   // Pulse animation for recording state
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -85,11 +86,20 @@ export const RecitationRecorder: React.FC<RecitationRecorderProps> = ({
       const uri = await AudioService.stopRecording();
       onFinishRecording(uri);
     } else {
+      setLiveTranscript('');
       setIsRecording(true);
       onStartRecording();
-      await AudioService.startRecording((level) => {
-        setMeterLevel(level);
-      });
+      const started = await AudioService.startRecording(
+        (level) => {
+          setMeterLevel(level);
+        },
+        (text) => {
+          setLiveTranscript(text);
+        }
+      );
+      if (!started) {
+        setIsRecording(false);
+      }
     }
   };
 
@@ -115,6 +125,7 @@ export const RecitationRecorder: React.FC<RecitationRecorderProps> = ({
         )}
 
         <TouchableOpacity
+          testID="recitation-mic-button"
           style={[
             styles.micButton,
             isRecording && styles.micButtonRecording,
@@ -166,6 +177,16 @@ export const RecitationRecorder: React.FC<RecitationRecorderProps> = ({
           ? t.recordingInProgress
           : t.tapToRecord}
       </Text>
+
+      {isRecording && (
+        <View style={{ marginTop: 8, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, backgroundColor: 'rgba(16, 185, 129, 0.12)', borderWidth: 1, borderColor: 'rgba(16, 185, 129, 0.35)', width: '100%' }}>
+          <Text style={{ color: '#A7F3D0', fontSize: 13, textAlign: 'center', fontWeight: '600' }}>
+            {liveTranscript
+              ? (isAr ? `🗣️ ما تم التقاطه: "${liveTranscript}"` : `🗣️ Heard: "${liveTranscript}"`)
+              : (isAr ? '🎙️ اقرأ الآية بصوت واضح ومسموع...' : '🎙️ Recite the verse clearly into the mic...')}
+          </Text>
+        </View>
+      )}
 
       {isRecording && (
         <TouchableOpacity
