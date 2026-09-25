@@ -15,9 +15,25 @@ export class AudioService {
   private static recordingStartTime: number = 0;
   private static webSpeechRecognition: any = null;
   private static lastTranscript: string = '';
+  private static voiceFrames: number = 0;
+  private static peakVoiceLevel: number = 0;
+  private static lastRecordingSilent: boolean = false;
+  private static speechRecSupported: boolean = false;
 
   public static getLastTranscript(): string {
     return this.lastTranscript;
+  }
+
+  public static wasLastRecordingSilent(): boolean {
+    return this.lastRecordingSilent;
+  }
+
+  public static isSpeechRecognitionSupported(): boolean {
+    return this.speechRecSupported;
+  }
+
+  public static getVoiceFrames(): number {
+    return this.voiceFrames;
   }
 
   public static async initAudio(): Promise<boolean> {
@@ -114,8 +130,13 @@ export class AudioService {
       }
 
       this.recordingStartTime = Date.now();
+      this.voiceFrames = 0;
+      this.peakVoiceLevel = 0;
+      this.lastRecordingSilent = false;
+      this.lastTranscript = '';
 
       if (Platform.OS !== 'web') {
+        this.speechRecSupported = false;
         await Audio.requestPermissionsAsync();
         await Audio.setAudioModeAsync({
           allowsRecordingIOS: true,
@@ -128,15 +149,18 @@ export class AudioService {
           isMeteringEnabled: true,
         });
 
-        if (onMetering) {
-          recordingInstance.setOnRecordingStatusUpdate((status) => {
-            if (status.isRecording && typeof status.metering === 'number') {
-              // Convert dB (-160 to 0) to normalized 0.0 - 1.0 range
-              const norm = Math.max(0, (status.metering + 160) / 160);
-              onMetering(norm);
+        recordingInstance.setOnRecordingStatusUpdate((status) => {
+          if (status.isRecording && typeof status.metering === 'number') {
+            // Convert dB (-160 to 0) to normalized 0.0 - 1.0 range
+            const norm = Math.max(0, (status.metering + 160) / 160);
+            // Human speech into mobile mic is > -34 dB (norm >= 0.785)
+            if (status.metering > -34) {
+              this.voiceFrames += 1;
+              if (norm > this.peakVoiceLevel) this.peakVoiceLevel = norm;
             }
-          });
-        }
+            if (onMetering) onMetering(norm);
+          }
+        });
 
         await recordingInstance.startAsync();
         this.recording = recordingInstance;
@@ -148,7 +172,7 @@ export class AudioService {
           this.webStream = stream;
           this.webAudioChunks = [];
 
-          // Live audio level metering via Web Audio API
+          // Live audio level metering & Human Voice Activity Detection (VAD) via Web Audio API
           try {
             const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
             if (AudioCtx) {
@@ -165,11 +189,23 @@ export class AudioService {
                 if (!this.webAnalyser) return;
                 this.webAnalyser.getByteFrequencyData(dataArray);
                 let sum = 0;
+                // Focus on bins 2..45 (human vocal frequencies ~150Hz - 3800Hz)
+                let vocalSum = 0;
+                const vocalBins = Math.min(45, dataArray.length);
                 for (let i = 0; i < dataArray.length; i++) {
                   sum += dataArray[i];
+                  if (i >= 2 && i < vocalBins) {
+                    vocalSum += dataArray[i];
+                  }
                 }
                 const avg = sum / dataArray.length;
+                const vocalAvg = vocalSum / Math.max(1, vocalBins - 2);
                 const norm = Math.min(1.0, avg / 70);
+                // Real human voice speaking into mic produces vocalAvg >= 22
+                if (vocalAvg >= 22) {
+                  this.voiceFrames += 1;
+                  if (norm > this.peakVoiceLevel) this.peakVoiceLevel = norm;
+                }
                 if (onMetering) onMetering(norm);
                 this.webAnimId = requestAnimationFrame(trackVolume);
               };
@@ -186,12 +222,11 @@ export class AudioService {
             else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
           }
 
-          this.lastTranscript = '';
-
           // Web Speech Recognition for real-time speech-to-verse transcripts
           try {
             const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
             if (SpeechRec) {
+              this.speechRecSupported = true;
               const rec = new SpeechRec();
               rec.lang = 'ar-SA';
               rec.continuous = true;
@@ -205,13 +240,17 @@ export class AudioService {
                 this.lastTranscript = full.trim();
               };
               rec.onerror = (e: any) => {
-                console.warn('Speech recognition warning:', e?.error);
+                if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+                  this.speechRecSupported = false;
+                }
               };
               rec.start();
               this.webSpeechRecognition = rec;
+            } else {
+              this.speechRecSupported = false;
             }
           } catch (srErr) {
-            console.warn('SpeechRecognition initialization warning:', srErr);
+            this.speechRecSupported = false;
           }
 
           const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -239,7 +278,7 @@ export class AudioService {
   public static async stopRecording(): Promise<string | null> {
     try {
       const duration = Date.now() - this.recordingStartTime;
-      const isTooShort = duration < 700;
+      const isTooShort = duration < 900;
 
       // Handle Web stop
       if (Platform.OS === 'web') {
@@ -259,7 +298,14 @@ export class AudioService {
           try {
             this.webSpeechRecognition.stop();
           } catch (e) {}
+          // Wait 350ms so SpeechRecognition emits its final onresult transcript before evaluation
+          await new Promise((r) => setTimeout(r, 350));
           this.webSpeechRecognition = null;
+        }
+
+        // Check if recording was silent (no sustained vocal energy AND no speech transcript)
+        if (this.voiceFrames < 8 && !this.lastTranscript.trim()) {
+          this.lastRecordingSilent = true;
         }
 
         if (this.webMediaRecorder) {
@@ -275,8 +321,12 @@ export class AudioService {
               this.webMediaRecorder = null;
               this.recording = null;
 
-              if (isTooShort || blob.size < 1500) {
-                console.warn('Web recording too short or empty:', blob.size, 'bytes');
+              if (isTooShort || blob.size < 1500 || this.lastRecordingSilent) {
+                console.warn('Web recording silent or too short:', {
+                  bytes: blob.size,
+                  voiceFrames: this.voiceFrames,
+                  transcript: this.lastTranscript,
+                });
                 resolve(null);
               } else {
                 const objectUrl = URL.createObjectURL(blob);
@@ -299,13 +349,17 @@ export class AudioService {
       // Handle Native Mobile stop
       if (!this.recording) return null;
 
+      if (this.voiceFrames < 4) {
+        this.lastRecordingSilent = true;
+      }
+
       let uri: string | null = null;
       if (typeof (this.recording as any).stopAndUnloadAsync === 'function') {
         await (this.recording as Audio.Recording).stopAndUnloadAsync();
-        if (!isTooShort) {
+        if (!isTooShort && !this.lastRecordingSilent) {
           uri = (this.recording as Audio.Recording).getURI();
         } else {
-          console.warn('Native recording was under 700ms threshold');
+          console.warn('Native recording was silent or under 900ms threshold');
           uri = null;
         }
       }

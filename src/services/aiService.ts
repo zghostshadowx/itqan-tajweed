@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ayah } from '../constants/quranData';
 import { CloudPoolService } from './cloudPoolConfig';
+import { AudioService } from './audioService';
 
 export interface MakhrajEvaluationItem {
   letter: string;
@@ -430,6 +431,51 @@ Respond ONLY with a JSON object matching this exact schema:
     if (!this.builtInPoolEnabled) return null;
 
     const cleanTranscript = (clientTranscript || '').trim();
+
+    // Strict Guard 1: Acoustic Voice Activity Detection (VAD) — Reject silence immediately with 0%
+    if (AudioService.wasLastRecordingSilent() || (AudioService.getVoiceFrames() < 6 && !cleanTranscript)) {
+      return {
+        overallScore: 0,
+        accuracyGrade: 'failed',
+        ayahEvaluated: ayah,
+        timestamp: new Date().toISOString(),
+        transcribedText: '— (لا يوجد صوت منطوق / صمت)',
+        makharijResults: [],
+        tajweedResults: [],
+        lahnAudit: {
+          status: 'lahn_jali',
+          titleAr: 'لم يتم رصد تلاوة صوتية (صوت صامت) ⚠️',
+          titleEn: 'No Recitation Detected (Silence)',
+          detailAr: 'لم يتم التقاط أي صوت بشري أو تلاوة أثناء التسجيل. يرجى التحدث بصوت واضح ومسموع عند القراءة.',
+          detailEn: 'No human voice or recitation was detected during the recording. Please recite clearly into the microphone.',
+        },
+        generalAdviceAr: 'اضغط على زر الميكروفون واقرأ الآية بصوت مسموع وواضح بعد استماعك للشيخ.',
+        generalAdviceEn: 'Tap the mic button and recite the verse clearly after listening to the reciter.',
+      };
+    }
+
+    // Strict Guard 2: Never substitute ayah.uthmaniText when speech recognition heard 0 words or voice energy was too weak
+    if (!cleanTranscript && (AudioService.isSpeechRecognitionSupported() || AudioService.getVoiceFrames() < 14)) {
+      return {
+        overallScore: 0,
+        accuracyGrade: 'failed',
+        ayahEvaluated: ayah,
+        timestamp: new Date().toISOString(),
+        transcribedText: '— (لم يتم التعرّف على كلمات قرآنية)',
+        makharijResults: [],
+        tajweedResults: [],
+        lahnAudit: {
+          status: 'lahn_jali',
+          titleAr: 'لم يتم التعرّف على كلمات قرآنية منطوقة ⚠️',
+          titleEn: 'No Spoken Quranic Words Recognized',
+          detailAr: 'لم يتم رصد نطق واضح لكلمات الآية الكريمة (صمت أو ضوضاء غير مفهومة). يرجى قراءة الآية بصوت واضح ومسموع.',
+          detailEn: 'No clear spoken words matching the verse were detected (silence or background noise). Please recite the verse clearly.',
+        },
+        generalAdviceAr: 'تأكد من القرب من الميكروفون ونطق كلمات الآية بوضوح وتأنٍ.',
+        generalAdviceEn: 'Stay close to the microphone and pronounce the words of the verse clearly.',
+      };
+    }
+
     if (cleanTranscript && !this.verifyRecitationMatches(cleanTranscript, ayah.uthmaniText)) {
       return {
         overallScore: 0,
@@ -614,22 +660,22 @@ Respond ONLY with valid JSON matching schema:
 
     const rawTranscript = (clientTranscript || '').trim();
 
-    // Check 1: Zero Audio / No Permission / Cancelled
-    if (!audioUri) {
+    // Check 1: Zero Audio / No Permission / Cancelled / Acoustic Silence (VAD)
+    if (!audioUri || AudioService.wasLastRecordingSilent() || (AudioService.getVoiceFrames() < 6 && !rawTranscript)) {
       return {
         overallScore: 0,
         accuracyGrade: 'failed',
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
-        transcribedText: rawTranscript || undefined,
+        transcribedText: '— (لا يوجد صوت منطوق / صمت)',
         makharijResults: [],
         tajweedResults: [],
         lahnAudit: {
           status: 'lahn_jali',
           titleAr: 'لم يتم رصد تلاوة صوتية (صوت صامت) ⚠️',
           titleEn: 'No Recitation Detected (Silence)',
-          detailAr: 'لم يتم تسجيل أي صوت للآية الكريمة، أو أن التسجيل أُوقف فوراً دون نطق. يرجى التحدث بوضوح بعد الضغط على زر الميكروفون.',
-          detailEn: 'No audio was recorded or the recording was stopped prematurely. Please recite the verse clearly after tapping the microphone.',
+          detailAr: 'لم يتم تسجيل أي صوت بشري للآية الكريمة، أو أن الميكروفون التقط صمتاً فقط دون نطق. يرجى التحدث بوضوح بعد الضغط على زر الميكروفون.',
+          detailEn: 'No human voice was recorded or only silence was captured. Please recite the verse clearly after tapping the microphone.',
         },
         generalAdviceAr: 'اضغط على زر الميكروفون واقرأ الآية بصوت مسموع وواضح بعد استماعك للشيخ.',
         generalAdviceEn: 'Tap the mic button and recite the verse clearly after listening to the reciter.',
