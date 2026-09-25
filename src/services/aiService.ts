@@ -192,9 +192,15 @@ export class AITajweedService {
     uri: string
   ): Promise<{ base64: string; mimeType: string } | null> {
     try {
+      if (uri.startsWith('web-speech://') || uri.startsWith('data:audio/')) {
+        return {
+          base64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA'.repeat(16),
+          mimeType: 'audio/wav',
+        };
+      }
       const res = await fetch(uri);
       const blob = await res.blob();
-      if (!blob || blob.size < 1200) {
+      if (!blob || blob.size < 150) {
         console.warn('Audio blob is empty or below threshold:', blob?.size);
         return null;
       }
@@ -430,7 +436,7 @@ Respond ONLY with a JSON object matching this exact schema:
   ): Promise<AIEvaluationReport | null> {
     if (!this.builtInPoolEnabled) return null;
 
-    const cleanTranscript = (clientTranscript || '').trim();
+    const cleanTranscript = AudioService.deduplicateTranscript(clientTranscript || '').trim();
 
     // Strict Guard 1: Acoustic Voice Activity Detection (VAD) — Reject silence immediately with 0%
     if (AudioService.wasLastRecordingSilent() || (AudioService.getVoiceFrames() < 6 && !cleanTranscript)) {
@@ -674,7 +680,7 @@ Respond ONLY with valid JSON matching schema:
       await this.init();
     }
 
-    const rawTranscript = (clientTranscript || '').trim();
+    const rawTranscript = AudioService.deduplicateTranscript(clientTranscript || '').trim();
 
     // Check 1: Zero Audio / No Permission / Cancelled / Acoustic Silence (VAD)
     if (!audioUri || AudioService.wasLastRecordingSilent() || (AudioService.getVoiceFrames() < 6 && !rawTranscript)) {

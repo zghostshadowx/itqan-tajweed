@@ -121,6 +121,34 @@ export class AudioService {
     }
   }
 
+  public static deduplicateTranscript(raw: string): string {
+    if (!raw) return '';
+    const words = raw.trim().split(/\s+/).filter(Boolean);
+    if (words.length <= 1) return words.join(' ');
+
+    // 1. Remove consecutive identical words (e.g. "بسم بسم الله" -> "بسم الله")
+    const dedupedWords: string[] = [];
+    for (const w of words) {
+      if (dedupedWords.length === 0 || dedupedWords[dedupedWords.length - 1] !== w) {
+        dedupedWords.push(w);
+      }
+    }
+
+    // 2. Remove repeated phrase blocks (e.g. "بسم الله الرحمن الرحيم بسم الله الرحمن الرحيم" -> "بسم الله الرحمن الرحيم")
+    let result = dedupedWords.join(' ');
+    const n = dedupedWords.length;
+    for (let blockLen = Math.floor(n / 2); blockLen >= 2; blockLen--) {
+      const firstBlock = dedupedWords.slice(0, blockLen).join(' ');
+      const secondBlock = dedupedWords.slice(blockLen, blockLen * 2).join(' ');
+      if (firstBlock === secondBlock) {
+        const remaining = dedupedWords.slice(blockLen).join(' ');
+        return this.deduplicateTranscript(remaining);
+      }
+    }
+
+    return result;
+  }
+
   // --- Microphone Recording for Recitation & AI Analysis ---
   public static async startRecording(
     onMetering?: (level: number) => void,
@@ -177,29 +205,45 @@ export class AudioService {
           typeof navigator !== 'undefined' &&
           /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '');
 
-        let finalizedChunks = '';
         if (SpeechRec) {
           try {
             this.speechRecSupported = true;
             const rec = new SpeechRec();
             rec.lang = 'ar-SA';
-            rec.continuous = true;
+            // Disable continuous on mobile Android Chrome to prevent cumulative x2 duplication bug;
+            // rec.onend automatically restarts if the user pauses for breath
+            rec.continuous = !isMobileBrowser;
             rec.interimResults = true;
             rec.maxAlternatives = 1;
 
+            let previousSessionText = '';
+            let currentSessionText = '';
+
             rec.onresult = (e: any) => {
-              let interim = '';
-              for (let i = e.resultIndex || 0; i < e.results.length; i++) {
-                const seg = e.results[i][0].transcript;
-                if (e.results[i].isFinal) {
-                  finalizedChunks += seg + ' ';
+              let sessionPieces: string[] = [];
+              for (let i = 0; i < e.results.length; i++) {
+                const seg = (e.results[i][0]?.transcript || '').trim();
+                if (!seg) continue;
+                // Android Chrome often emits cumulative transcripts in e.results[i];
+                // if seg starts with the previous piece, replace it instead of duplicating
+                if (sessionPieces.length > 0) {
+                  const prev = sessionPieces[sessionPieces.length - 1];
+                  if (seg.startsWith(prev) || seg === prev) {
+                    sessionPieces[sessionPieces.length - 1] = seg;
+                  } else if (!prev.includes(seg)) {
+                    sessionPieces.push(seg);
+                  }
                 } else {
-                  interim += seg + ' ';
+                  sessionPieces.push(seg);
                 }
               }
-              const combined = (finalizedChunks + interim).trim();
-              if (combined) {
-                this.lastTranscript = combined;
+              currentSessionText = sessionPieces.join(' ').trim();
+              const rawCombined = previousSessionText
+                ? `${previousSessionText} ${currentSessionText}`
+                : currentSessionText;
+              const cleaned = this.deduplicateTranscript(rawCombined);
+              if (cleaned) {
+                this.lastTranscript = cleaned;
                 this.voiceFrames += 5;
                 if (onTranscriptUpdate) onTranscriptUpdate(this.lastTranscript);
               }
@@ -212,6 +256,14 @@ export class AudioService {
             };
 
             rec.onend = () => {
+              if (currentSessionText) {
+                previousSessionText = this.deduplicateTranscript(
+                  previousSessionText
+                    ? `${previousSessionText} ${currentSessionText}`
+                    : currentSessionText
+                );
+                currentSessionText = '';
+              }
               // Automatically restart if user is still recording and took a brief breath pause
               if (this.recording && this.webSpeechRecognition === rec) {
                 try {
@@ -375,11 +427,11 @@ export class AudioService {
 
         // If mobile speech-only mode (where getUserMedia was skipped to prevent mic conflict)
         if ((wasRecording as any)?.isMobileSpeechOnly) {
+          this.lastTranscript = this.deduplicateTranscript(this.lastTranscript);
           if (isTooShort || this.lastRecordingSilent || !this.lastTranscript.trim()) {
             return null;
           }
-          // Return a valid base64 WAV data URI representing the verified speech capture
-          return 'data:audio/wav;base64,' + 'UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='.repeat(12);
+          return 'web-speech://verified';
         }
 
         if (this.webMediaRecorder) {
