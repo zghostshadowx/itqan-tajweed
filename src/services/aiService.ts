@@ -150,42 +150,134 @@ export class AITajweedService {
   }
 
   /**
-   * Validates whether the spoken text matches the chosen target verse.
-   * Accurately recognizes Quranic words, transliterated Islamic terms (e.g. "bismillah"),
-   * while rejecting unrelated English/foreign words (e.g. "banana").
+   * Computes normalized Levenshtein similarity (0.0 to 1.0) between two Arabic words.
    */
-  public static verifyRecitationMatches(spokenText: string, targetVerse: string): boolean {
-    if (!spokenText || !targetVerse) return false;
+  public static computeWordSimilarity(w1: string, w2: string): number {
+    if (!w1 || !w2) return 0;
+    if (w1 === w2) return 1.0;
+    const stripAl = (s: string) => (s.startsWith('ال') && s.length > 3 ? s.slice(2) : s);
+    const a = stripAl(w1);
+    const b = stripAl(w2);
+    if (a === b && a.length >= 2) return 0.92;
 
+    const m = a.length;
+    const n = b.length;
+    const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        dp[i][j] = Math.min(
+          dp[i - 1][j] + 1,
+          dp[i][j - 1] + 1,
+          dp[i - 1][j - 1] + cost
+        );
+      }
+    }
+    const dist = dp[m][n];
+    const maxLen = Math.max(m, n);
+    return maxLen > 0 ? Math.max(0, (maxLen - dist) / maxLen) : 0;
+  }
+
+  /**
+   * Performs strict word-by-word and letter-by-letter alignment between spoken words and target Ayah.
+   * Identifies exact matches, mispronounced words (with exact letter diffs), missing words, and wrong/extra words.
+   */
+  public static analyzeWordAlignment(spokenText: string, targetVerse: string) {
     const normSpoken = this.normalizeArabicText(spokenText);
     const normTarget = this.normalizeArabicText(targetVerse);
-
-    // If after transliteration expansion it contains no Arabic words at all, it's pure non-Quranic speech (e.g. "banana")
-    if (!/[\u0600-\u06FF]/.test(normSpoken)) {
-      return false;
-    }
-
-    if (!normSpoken) return false;
-
-    const spokenWords = normSpoken.split(' ').filter((w) => w.length > 0 && /[\u0600-\u06FF]/.test(w));
+    const uthmaniWords = targetVerse.trim().split(/\s+/).filter(Boolean);
     const targetWords = normTarget.split(' ').filter((w) => w.length > 0 && /[\u0600-\u06FF]/.test(w));
+    const spokenWords = normSpoken.split(' ').filter((w) => w.length > 0 && /[\u0600-\u06FF]/.test(w));
 
-    if (targetWords.length === 0) return true;
-    if (spokenWords.length === 0) return false;
+    const usedSpoken = new Array(spokenWords.length).fill(false);
+    let exactCount = 0;
+    const distortedWords: Array<{ targetUthmani: string; targetNorm: string; spokenWord: string; expectedLetter: string; spokenLetter: string }> = [];
+    const missingWords: string[] = [];
 
-    // Count how many target words match spoken words
-    let matchedCount = 0;
-    for (const tWord of targetWords) {
-      const found = spokenWords.some(
-        (sWord) => sWord === tWord || sWord.includes(tWord) || tWord.includes(sWord)
-      );
-      if (found) {
-        matchedCount++;
+    for (let i = 0; i < targetWords.length; i++) {
+      const tw = targetWords[i];
+      const uthmani = uthmaniWords[i] || tw;
+
+      // 1. Look for exact word match near expected position
+      let bestIdx = -1;
+      let bestSim = 0;
+      for (let j = 0; j < spokenWords.length; j++) {
+        if (usedSpoken[j]) continue;
+        const sim = this.computeWordSimilarity(spokenWords[j], tw);
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestIdx = j;
+        }
+      }
+
+      if (bestIdx !== -1 && bestSim >= 0.98) {
+        usedSpoken[bestIdx] = true;
+        exactCount++;
+      } else if (bestIdx !== -1 && bestSim >= 0.62 && (tw.length >= 3 || spokenWords[bestIdx].length >= 3)) {
+        usedSpoken[bestIdx] = true;
+        const sw = spokenWords[bestIdx];
+        // Find the first differing letter to give exact Makhraj feedback
+        let expChar = tw[0] || 'ح';
+        let spkChar = sw[0] || 'ه';
+        for (let c = 0; c < Math.max(tw.length, sw.length); c++) {
+          if (tw[c] !== sw[c]) {
+            expChar = tw[c] || expChar;
+            spkChar = sw[c] || '—';
+            break;
+          }
+        }
+        distortedWords.push({
+          targetUthmani: uthmani,
+          targetNorm: tw,
+          spokenWord: sw,
+          expectedLetter: expChar,
+          spokenLetter: spkChar,
+        });
+      } else {
+        missingWords.push(uthmani);
       }
     }
 
-    // At least 1 target word must match to be considered an authentic attempt of this verse
-    return matchedCount >= 1;
+    const wrongWords: string[] = [];
+    for (let j = 0; j < spokenWords.length; j++) {
+      if (!usedSpoken[j]) {
+        wrongWords.push(spokenWords[j]);
+      }
+    }
+
+    const totalTarget = Math.max(1, targetWords.length);
+    const rawRatio =
+      (exactCount * 1.0 + distortedWords.length * 0.68 - wrongWords.length * 0.35) / totalTarget;
+    const calculatedScore = Math.max(0, Math.min(100, Math.round(rawRatio * 100)));
+
+    return {
+      targetWords,
+      spokenWords,
+      exactCount,
+      distortedWords,
+      missingWords,
+      wrongWords,
+      calculatedScore,
+    };
+  }
+
+  /**
+   * Validates whether the spoken text genuinely matches the chosen target verse.
+   */
+  public static verifyRecitationMatches(spokenText: string, targetVerse: string): boolean {
+    if (!spokenText || !targetVerse) return false;
+    const normSpoken = this.normalizeArabicText(spokenText);
+    if (!/[\u0600-\u06FF]/.test(normSpoken)) return false;
+
+    const alignment = this.analyzeWordAlignment(spokenText, targetVerse);
+    const validMatches = alignment.exactCount + alignment.distortedWords.length;
+    if (validMatches === 0) return false;
+    // Reject if wrong words outnumber matched words
+    if (alignment.wrongWords.length > validMatches) return false;
+    return alignment.calculatedScore >= 20;
   }
 
   private static async uriToBase64(
@@ -503,62 +595,100 @@ Respond ONLY with a JSON object matching this exact schema:
       };
     }
 
-    const targetNorm = this.normalizeArabicText(ayah.uthmaniText);
-    const targetWords = targetNorm.split(' ').filter(Boolean);
-    const spokenNorm = cleanTranscript ? this.normalizeArabicText(cleanTranscript) : targetNorm;
-    const spokenWords = spokenNorm.split(' ').filter(Boolean);
+    const effectiveTranscript = cleanTranscript || ayah.uthmaniText;
+    const alignment = this.analyzeWordAlignment(effectiveTranscript, ayah.uthmaniText);
+    const hasMistakes =
+      alignment.missingWords.length > 0 ||
+      alignment.wrongWords.length > 0 ||
+      alignment.distortedWords.length > 0;
 
-    // Count exact & root word matches against target verse
-    let matchedWordsCount = 0;
-    for (const tw of targetWords) {
-      if (spokenWords.some((sw) => sw === tw || sw.includes(tw) || tw.includes(sw))) {
-        matchedWordsCount++;
+    if (hasMistakes) {
+      const arBullets: string[] = [
+        `• الكلمات المتطابقة تماماً: (${alignment.exactCount} من ${alignment.targetWords.length} كلمات).`,
+      ];
+      const enBullets: string[] = [
+        `• Exact matched words: (${alignment.exactCount} of ${alignment.targetWords.length} words).`,
+      ];
+
+      if (alignment.distortedWords.length > 0) {
+        arBullets.push(
+          `• تحريف في الحروف/المخارج: ${alignment.distortedWords
+            .map(
+              (d) =>
+                `نطقت "${d.spokenWord}" بدلاً من "${d.targetUthmani}" (إبدال حرف "${d.expectedLetter}" بـ "${d.spokenLetter}")`
+            )
+            .join(' ، ')}.`
+        );
+        enBullets.push(
+          `• Letter/Makhraj distortion: ${alignment.distortedWords
+            .map(
+              (d) =>
+                `pronounced "${d.spokenWord}" instead of "${d.targetUthmani}" (letter "${d.expectedLetter}" sounded like "${d.spokenLetter}")`
+            )
+            .join(', ')}.`
+        );
       }
-    }
 
-    // Character-level similarity for precision scoring (up to 100%)
-    const targetChars = targetNorm.replace(/\s+/g, '');
-    const spokenChars = spokenNorm.replace(/\s+/g, '');
-    const lenRatio = targetChars.length > 0
-      ? Math.min(spokenChars.length, targetChars.length) / Math.max(spokenChars.length, targetChars.length)
-      : 1;
-    const exactMatch = spokenNorm === targetNorm;
-    const dynamicFullScore = exactMatch
-      ? 99
-      : Math.max(90, Math.min(98, Math.round(90 + lenRatio * 8)));
-    const dynamicPartialScore = Math.max(
-      25,
-      Math.min(84, Math.round((matchedWordsCount / Math.max(1, targetWords.length)) * 88))
-    );
+      if (alignment.missingWords.length > 0) {
+        arBullets.push(`• كلمات ناقصة لم تقرأها: (${alignment.missingWords.join(' ، ')}).`);
+        enBullets.push(`• Missing words skipped: (${alignment.missingWords.join(', ')}).`);
+      }
 
-    const minFullVerseVoiceFrames = Math.max(12, targetWords.length * 4);
-    const isPartial = cleanTranscript
-      ? matchedWordsCount < targetWords.length
-      : AudioService.getVoiceFrames() < minFullVerseVoiceFrames;
+      if (alignment.wrongWords.length > 0) {
+        arBullets.push(`• كلمات خاطئة أو زائدة خارج الآية: (${alignment.wrongWords.join(' ، ')}).`);
+        enBullets.push(`• Wrong/extra words spoken: (${alignment.wrongWords.join(', ')}).`);
+      }
 
-    const partialPreview = cleanTranscript || ayah.uthmaniText.split(' ').slice(0, Math.max(1, Math.floor(targetWords.length / 2))).join(' ') + ' ...';
-    const effectiveTranscript = isPartial ? partialPreview : (cleanTranscript || ayah.uthmaniText);
+      const dynamicMakharij = alignment.distortedWords.map((d) => ({
+        letter: d.expectedLetter,
+        makhrajZoneAr: `في كلمة (${d.targetUthmani})`,
+        makhrajZoneEn: `In word (${d.targetUthmani})`,
+        status: 'needs_practice' as const,
+        commentAr: `نطقتها "${d.spokenWord}" بدلاً من "${d.targetUthmani}" (خرج حرف "${d.spokenLetter}" بدلاً من "${d.expectedLetter}")`,
+        commentEn: `Spoken as "${d.spokenWord}" instead of "${d.targetUthmani}" ("${d.spokenLetter}" instead of "${d.expectedLetter}")`,
+        anatomicalTipAr: `حقق مخرج حرف (${d.expectedLetter}) في كلمة "${d.targetUthmani}" ولا تبدله بحرف (${d.spokenLetter}).`,
+        anatomicalTipEn: `Ensure clear articulation of (${d.expectedLetter}) in "${d.targetUthmani}" without substituting (${d.spokenLetter}).`,
+      }));
 
-    if (isPartial) {
+      const hasMajorSubstitution = alignment.wrongWords.length > 0 || alignment.distortedWords.length > 0;
+      const grade =
+        alignment.calculatedScore >= 75
+          ? 'good'
+          : alignment.calculatedScore >= 45
+          ? 'needs_practice'
+          : 'failed';
+
       return {
-        overallScore: dynamicPartialScore,
-        accuracyGrade: 'needs_practice',
+        overallScore: alignment.calculatedScore,
+        accuracyGrade: grade,
         ayahEvaluated: ayah,
         timestamp: new Date().toISOString(),
         transcribedText: effectiveTranscript,
-        makharijResults: [],
+        makharijResults: dynamicMakharij,
         tajweedResults: [],
         lahnAudit: {
-          status: 'lahn_khafi',
-          titleAr: 'تلاوة غير مكتملة للآية الكريمة ⚠️',
-          titleEn: 'Partial Recitation of Target Verse',
-          detailAr: `لقد قرأت (${matchedWordsCount} من ${targetWords.length} كلمات): "${effectiveTranscript}"، يرجى إتمام قراءة الآية كاملة: "${ayah.uthmaniText}".`,
-          detailEn: `You recited (${matchedWordsCount} of ${targetWords.length} words): "${effectiveTranscript}". Please complete the full verse: "${ayah.uthmaniText}".`,
+          status: hasMajorSubstitution ? 'lahn_jali' : 'lahn_khafi',
+          titleAr: hasMajorSubstitution
+            ? 'تنبيه: رصد إبدال أو خطأ في الكلمات أو الحروف ⚠️'
+            : 'تلاوة غير مكتملة للآية الكريمة ⚠️',
+          titleEn: hasMajorSubstitution
+            ? 'Word or Letter Substitution Detected'
+            : 'Incomplete Verse Recitation',
+          detailAr: arBullets.join('\n'),
+          detailEn: enBullets.join('\n'),
         },
-        generalAdviceAr: 'أحسنت في نطق الكلمات الأولى، وأكمل الآية حتى نهايتها لتحصل على الدرجة الكاملة (100%).',
-        generalAdviceEn: 'Good pronunciation of the opening words—complete the full verse for a full score (100%).',
+        generalAdviceAr:
+          alignment.distortedWords.length > 0
+            ? `ركز على تصحيح نطق (${alignment.distortedWords.map((d) => d.targetUthmani).join(' ، ')}) وإخراج حروفها من مخارجها الصحيحة.`
+            : 'أعد قراءة الآية الكريمة كاملة من أولها إلى آخرها دون إسقاط أو زيادة كلمات.',
+        generalAdviceEn:
+          alignment.distortedWords.length > 0
+            ? `Focus on correcting (${alignment.distortedWords.map((d) => d.targetUthmani).join(', ')}) with proper letter articulation.`
+            : 'Recite the complete verse from start to finish without skipping or adding extra words.',
       };
     }
+
+    const dynamicFullScore = 100;
 
     const poolConfig = CloudPoolService.getBuiltInCloudCredentials();
     const approxSeconds = Math.max(1.5, Math.round((audioBase64.length * 0.75) / 16000 * 10) / 10);
