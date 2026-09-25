@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ayah } from '../constants/quranData';
+import { CloudPoolService } from './cloudPoolConfig';
 
 export interface MakhrajEvaluationItem {
   letter: string;
@@ -44,10 +45,12 @@ export interface AIEvaluationReport {
 
 export class AITajweedService {
   private static geminiApiKey: string = '';
+  private static builtInPoolEnabled: boolean = true;
   private static readonly GEMINI_STORAGE_KEY = '@itqan_gemini_api_key';
 
   public static async init(): Promise<string> {
     try {
+      await CloudPoolService.loadGoogleSession();
       const key = await AsyncStorage.getItem(this.GEMINI_STORAGE_KEY);
       if (key) {
         this.geminiApiKey = key.trim();
@@ -57,6 +60,14 @@ export class AITajweedService {
       console.warn('Error reading stored Gemini key:', e);
     }
     return '';
+  }
+
+  public static isZeroConfigReady(): boolean {
+    return this.builtInPoolEnabled || Boolean(this.geminiApiKey);
+  }
+
+  public static setBuiltInPoolEnabled(enabled: boolean): void {
+    this.builtInPoolEnabled = enabled;
   }
 
   public static getGeminiApiKey(): string {
@@ -406,6 +417,124 @@ Respond ONLY with a JSON object matching this exact schema:
   }
 
   /**
+   * Built-in Zero-Config Cloud AI Pool Evaluator.
+   * Ensures elderly and non-technical users get immediate, authentic AI recitation evaluation
+   * out-of-the-box without manually configuring an API key in Settings.
+   */
+  public static async evaluateWithBuiltInCloudPool(
+    ayah: Ayah,
+    audioBase64: string,
+    mimeType: string = 'audio/mp4',
+    clientTranscript?: string
+  ): Promise<AIEvaluationReport | null> {
+    if (!this.builtInPoolEnabled) return null;
+
+    const creds = CloudPoolService.getBuiltInCloudCredentials();
+    const audioFormat = mimeType.includes('wav')
+      ? 'wav'
+      : mimeType.includes('mp3') || mimeType.includes('mpeg')
+      ? 'mp3'
+      : 'mp4';
+
+    const prompt = `You are a certified Master Sheikh of Quranic Recitation (شيخ مقرئ مجاز بالسند المتصل برواية حفص عن عاصم).
+Target Quranic Ayah: "${ayah.uthmaniText}"
+${clientTranscript ? `Client speech recognizer detected: "${clientTranscript}"` : ''}
+Transcribe the student's spoken words into "transcribedText" and evaluate strictly against "${ayah.uthmaniText}".
+If unrelated words/English/silence -> overallScore 0, accuracyGrade "failed", lahnAudit status "lahn_jali".
+If partial verse -> overallScore 45-65, accuracyGrade "needs_practice", lahnAudit status "lahn_khafi".
+If complete verse -> overallScore 88-100 (or 50-87 if Tajweed/Makharij errors), evaluate Makharij and Tajweed rules accurately.
+Respond ONLY with valid JSON matching schema: {transcribedText, overallScore, accuracyGrade, lahnAudit:{status,titleAr,titleEn,detailAr,detailEn}, generalAdviceAr, generalAdviceEn, makharijResults:[{letter,makhrajZoneAr,makhrajZoneEn,status,commentAr,commentEn,anatomicalTipAr,anatomicalTipEn}], tajweedResults:[{ruleNameAr,ruleNameEn,status,scorePercent,feedbackAr,feedbackEn}]}.`;
+
+    const poolModels = [
+      {
+        url: 'https://openrouter.ai/api/v1/chat/completions',
+        key: creds.openRouterKey,
+        model: 'google/gemini-2.0-flash-001',
+      },
+      {
+        url: 'https://openrouter.ai/api/v1/chat/completions',
+        key: creds.openRouterKey,
+        model: 'google/gemini-2.5-flash',
+      },
+      {
+        url: 'https://api.openai.com/v1/chat/completions',
+        key: creds.openAiKey,
+        model: 'gpt-4o-audio-preview',
+      },
+    ];
+
+    for (const provider of poolModels) {
+      if (!provider.key) continue;
+      try {
+        const response = await fetch(provider.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${provider.key}`,
+          },
+          body: JSON.stringify({
+            model: provider.model,
+            temperature: 0.1,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: prompt },
+                  {
+                    type: 'input_audio',
+                    input_audio: {
+                      data: audioBase64,
+                      format: audioFormat,
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+        });
+
+        if (!response.ok) continue;
+        const data = await response.json();
+        const rawText = data?.choices?.[0]?.message?.content;
+        if (!rawText) continue;
+
+        let cleanJson = rawText.trim();
+        if (cleanJson.startsWith('```')) {
+          cleanJson = cleanJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+        }
+        const parsed = JSON.parse(cleanJson);
+        const transcribed = (parsed.transcribedText || clientTranscript || '').trim();
+        const isMatched = this.verifyRecitationMatches(transcribed, ayah.uthmaniText);
+
+        if (transcribed && !isMatched) {
+          parsed.overallScore = 0;
+          parsed.accuracyGrade = 'failed';
+          parsed.lahnAudit = {
+            status: 'lahn_jali',
+            titleAr: 'خطأ جلي: الكلمات المنطوقة لا تطابق الآية المختارة 🛑',
+            titleEn: 'Major Error: Spoken Words Do Not Match Chosen Verse',
+            detailAr: `لقد نطقت: "${transcribed}". بينما الآية المطلوبة هي: "${ayah.uthmaniText}". القراءة مرفوضة تماماً لمخالفتها الآية.`,
+            detailEn: `You said: "${transcribed}". The target chosen verse is: "${ayah.uthmaniText}". Spoken words do not match the chosen verse. Recitation rejected.`,
+          };
+          parsed.makharijResults = [];
+          parsed.tajweedResults = [];
+        }
+
+        return {
+          ...parsed,
+          transcribedText: transcribed,
+          ayahEvaluated: ayah,
+          timestamp: new Date().toISOString(),
+        };
+      } catch (e) {
+        console.warn(`Built-in pool model ${provider.model} failed:`, e);
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Honest, uncompromised evaluation.
    * Analyzes the student's recitation rigorously without sugarcoating.
    */
@@ -466,7 +595,7 @@ Respond ONLY with a JSON object matching this exact schema:
       };
     }
 
-    // If Gemini key is configured, attempt Cloud AI evaluation
+    // Tier 1: If user configured a personal Gemini key, attempt direct Gemini Cloud AI evaluation
     if (this.geminiApiKey) {
       try {
         const geminiReport = await this.evaluateWithGemini(
@@ -481,12 +610,29 @@ Respond ONLY with a JSON object matching this exact schema:
           return geminiReport;
         }
       } catch (err) {
-        console.warn('Gemini cloud evaluation fallback to local:', err);
+        console.warn('Personal Gemini key evaluation fallback to built-in cloud pool:', err);
       }
     }
 
-    // Failsafe Guard: If no Gemini API key is configured and words cannot be verified
-    if (!this.geminiApiKey) {
+    // Tier 2: Built-in Zero-Config Cloud AI Pool (works automatically for all users out-of-the-box!)
+    if (this.builtInPoolEnabled) {
+      try {
+        const poolReport = await this.evaluateWithBuiltInCloudPool(
+          ayah,
+          audioData.base64,
+          audioData.mimeType,
+          rawTranscript
+        );
+        if (poolReport) {
+          return poolReport;
+        }
+      } catch (err) {
+        console.warn('Built-in cloud pool evaluation error:', err);
+      }
+    }
+
+    // Failsafe Guard: If both personal key and built-in pool are disabled
+    if (!this.geminiApiKey && !this.builtInPoolEnabled) {
       return {
         overallScore: 0,
         accuracyGrade: 'failed',

@@ -7,7 +7,9 @@ import { Language, TRANSLATIONS } from './src/constants/translations';
 import { FEATURED_SURAHS, Surah } from './src/constants/quranData';
 import { ProgressService, UserProgress, INITIAL_PROGRESS } from './src/services/progressService';
 import { AITajweedService } from './src/services/aiService';
+import { CloudPoolService, GoogleUserSession } from './src/services/cloudPoolConfig';
 import { Header } from './src/components/Header';
+import { HowToUseModal } from './src/components/HowToUseModal';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { RecitationScreen } from './src/screens/RecitationScreen';
 import { MakharijScreen } from './src/screens/MakharijScreen';
@@ -24,6 +26,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [selectedSurah, setSelectedSurah] = useState<Surah>(FEATURED_SURAHS[0]);
   const [progress, setProgress] = useState<UserProgress>(INITIAL_PROGRESS);
+  const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
+  const [googleUser, setGoogleUser] = useState<GoogleUserSession | null>(null);
 
   useEffect(() => {
     AsyncStorage.getItem(LANGUAGE_STORAGE_KEY)
@@ -35,6 +39,12 @@ export default function App() {
       .catch(() => {});
 
     AITajweedService.init();
+    CloudPoolService.loadGoogleSession()
+      .then((session) => {
+        if (session) setGoogleUser(session);
+      })
+      .catch(() => {});
+
     return ProgressService.subscribe(setProgress);
   }, []);
 
@@ -49,6 +59,11 @@ export default function App() {
   const handleToggleLanguage = () => {
     const nextLang: Language = currentLanguage === 'ar' ? 'en' : 'ar';
     handleSetLanguage(nextLang);
+  };
+
+  const handleQuickGoogleSignIn = async () => {
+    const session = await CloudPoolService.signInWithGoogleQuick();
+    setGoogleUser(session);
   };
 
   const handleSelectSurah = (surah: Surah) => {
@@ -84,6 +99,7 @@ export default function App() {
           <SettingsScreen
             currentLanguage={currentLanguage}
             onSetLanguage={handleSetLanguage}
+            onOpenGuide={() => setShowGuideModal(true)}
           />
         );
       default:
@@ -107,7 +123,17 @@ export default function App() {
         <Header
           currentLanguage={currentLanguage}
           onToggleLanguage={handleToggleLanguage}
+          onOpenGuide={() => setShowGuideModal(true)}
           streakCount={progress.streakDays}
+        />
+
+        {/* Interactive How to Use Modal */}
+        <HowToUseModal
+          visible={showGuideModal}
+          onClose={() => setShowGuideModal(false)}
+          currentLanguage={currentLanguage}
+          onQuickGoogleSignIn={handleQuickGoogleSignIn}
+          googleUserEmail={googleUser?.email || null}
         />
 
         {/* Active Tab Screen */}

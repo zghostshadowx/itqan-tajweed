@@ -27,23 +27,29 @@ import {
   Key,
   Sparkles,
   Trash2,
+  HelpCircle,
+  UserCheck,
 } from 'lucide-react-native';
 import { AITajweedService } from '../services/aiService';
+import { CloudPoolService, GoogleUserSession } from '../services/cloudPoolConfig';
 
 interface SettingsScreenProps {
   currentLanguage: Language;
   onSetLanguage: (lang: Language) => void;
+  onOpenGuide?: () => void;
 }
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   currentLanguage,
   onSetLanguage,
+  onOpenGuide,
 }) => {
   const t = TRANSLATIONS[currentLanguage];
   const isAr = currentLanguage === 'ar';
 
   const [geminiKey, setGeminiKey] = useState<string>('');
   const [isKeySaved, setIsKeySaved] = useState<boolean>(false);
+  const [googleUser, setGoogleUser] = useState<GoogleUserSession | null>(null);
 
   useEffect(() => {
     AITajweedService.init().then((savedKey) => {
@@ -52,7 +58,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         setIsKeySaved(true);
       }
     });
+    CloudPoolService.loadGoogleSession().then((session) => {
+      if (session) setGoogleUser(session);
+    });
   }, []);
+
+  const handleGoogleSignIn = async () => {
+    const session = await CloudPoolService.signInWithGoogleQuick();
+    setGoogleUser(session);
+    Alert.alert(
+      isAr ? 'تم ربط حساب Google بنجاح ✅' : 'Google Account Connected ✅',
+      isAr
+        ? 'تم تفعيل الذكاء الاصطناعي السحابي التلقائي ومزامنة الختمة بنجاح دون الحاجة لأي مفتاح!'
+        : 'Automatic Cloud AI and Quran progress sync are now active—no API key required!'
+    );
+  };
+
+  const handleGoogleSignOut = async () => {
+    await CloudPoolService.signOutGoogle();
+    setGoogleUser(null);
+  };
 
   const handleOpenCloudWeb = async () => {
     try {
@@ -109,8 +134,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     Alert.alert(
       isAr ? 'تم الحذف' : 'Removed',
       isAr
-        ? 'تم مسح المفتاح والعودة إلى محرك التحليل الصوتي الداخلي (بدون إنترنت).'
-        : 'Key removed. Reverted to internal offline acoustic engine.'
+        ? 'تم مسح المفتاح الشخصي والعودة إلى محرك السحابة المدمج التلقائي.'
+        : 'Personal key removed. Reverted to built-in automatic Cloud AI pool.'
     );
   };
 
@@ -129,9 +154,58 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <Text style={styles.bannerTitle}>{t.appName}</Text>
           <Text style={styles.bannerSubtitle}>{t.appSubtitle}</Text>
           <View style={styles.versionPill}>
-            <Text style={styles.versionText}>v1.0.1 • AI Tajweed Edition</Text>
+            <Text style={styles.versionText}>v1.1.0 • AI Tajweed Edition</Text>
           </View>
         </View>
+      </View>
+
+      {/* Quick Launch How to Use Guide Card + 1-Tap Google Sign-In */}
+      <View style={styles.card}>
+        <View style={[styles.cardHeader, isAr ? styles.rtlRow : styles.ltrRow]}>
+          <HelpCircle size={18} color={COLORS.gold} />
+          <Text style={styles.cardTitle}>
+            {isAr ? 'دليل الاستخدام السريع والربط التلقائي' : 'Quick Guide & 1-Tap Google Connect'}
+          </Text>
+        </View>
+        <Text style={[styles.descText, isAr ? styles.textRight : styles.textLeft]}>
+          {isAr
+            ? 'يعمل الذكاء الاصطناعي في إتقان تلقائياً فور التثبيت دون الحاجة لإدخال مفتاح API يدوياً. يمكنك أيضاً فتح دليل الاستخدام المبسط أو ربط حساب Google بلمسة واحدة.'
+            : 'Itqan Cloud AI works automatically out-of-the-box with zero API key setup required. Open the visual guide or sign in with Google in one tap below.'}
+        </Text>
+
+        {onOpenGuide && (
+          <TouchableOpacity
+            style={[styles.saveKeyBtn, { marginTop: SPACING.sm }]}
+            onPress={onOpenGuide}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.saveKeyBtnText}>
+              {isAr ? '📖 فتح دليل طريقة استخدام التطبيق (خطوة بخطوة)' : '📖 Open How to Use Guide (Step-by-Step)'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity
+          style={[
+            styles.getKeyBtn,
+            { marginTop: SPACING.sm },
+            googleUser ? { borderColor: '#2ECC71', backgroundColor: 'rgba(46, 204, 113, 0.12)' } : null,
+            isAr ? styles.rtlRow : styles.ltrRow,
+          ]}
+          onPress={googleUser ? handleGoogleSignOut : handleGoogleSignIn}
+          activeOpacity={0.85}
+        >
+          <UserCheck size={16} color={googleUser ? '#2ECC71' : COLORS.gold} />
+          <Text style={[styles.getKeyBtnText, googleUser ? { color: '#2ECC71' } : null]}>
+            {googleUser
+              ? isAr
+                ? `✓ متصل بحساب Google (${googleUser.email}) — الذكاء التلقائي مفعل`
+                : `✓ Signed in with Google (${googleUser.email}) — Auto AI Active`
+              : isAr
+              ? 'تسجيل الدخول بلمسة واحدة بحساب Google (تفعيل تلقائي بالكامل)'
+              : '1-Tap Sign in with Google (Full Automatic Cloud AI)'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Title */}
@@ -202,12 +276,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
         <View style={[styles.infoRow, isAr ? styles.rtlRow : styles.ltrRow]}>
           <Text style={styles.infoLabel}>{isAr ? 'الإصدار:' : 'Version:'}</Text>
-          <Text style={styles.infoValue}>1.0.1 (Release Build 2)</Text>
+          <Text style={styles.infoValue}>1.1.0 (Release Build 3)</Text>
         </View>
 
         <View style={[styles.infoRow, isAr ? styles.rtlRow : styles.ltrRow]}>
           <Text style={styles.infoLabel}>{isAr ? 'المحرك الذكي:' : 'AI Engine:'}</Text>
-          <Text style={styles.infoValue}>{isAr ? 'محرّك Gemini من Google (سحابي)' : 'Google Gemini (cloud)'}</Text>
+          <Text style={styles.infoValue}>
+            {isAr
+              ? 'محرّك Gemini من Google (سحابي مدمج يعمل تلقائياً)'
+              : 'Google Gemini (Built-in Auto Cloud)'}
+          </Text>
         </View>
       </View>
 

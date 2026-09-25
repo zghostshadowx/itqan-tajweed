@@ -2,17 +2,19 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { COLORS, SPACING, RADIUS } from '../constants/theme';
 import { Language, TRANSLATIONS } from '../constants/translations';
-import { Globe, Flame } from 'lucide-react-native';
+import { Globe, Flame, HelpCircle } from 'lucide-react-native';
 
 interface HeaderProps {
   currentLanguage: Language;
   onToggleLanguage: () => void;
+  onOpenGuide?: () => void;
   streakCount?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentLanguage,
   onToggleLanguage,
+  onOpenGuide,
   streakCount = 7,
 }) => {
   const t = TRANSLATIONS[currentLanguage];
@@ -37,8 +39,22 @@ export const Header: React.FC<HeaderProps> = ({
         </View>
       </View>
 
-      {/* Actions: Streak & Language Switcher */}
+      {/* Actions: How to Use Icon, Streak & Language Switcher */}
       <View style={[styles.actionsContainer, isAr ? styles.rtlRow : styles.ltrRow]}>
+        {/* How to Use Guide Button */}
+        {onOpenGuide && (
+          <TouchableOpacity
+            style={styles.guidePill}
+            onPress={onOpenGuide}
+            activeOpacity={0.8}
+          >
+            <HelpCircle size={16} color={COLORS.gold} />
+            <Text style={styles.guideText}>
+              {isAr ? 'دليل' : 'Guide'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* Streak Badge */}
         <View style={styles.streakBadge}>
           <Flame size={16} color="#FF9F43" />
@@ -115,7 +131,23 @@ const styles = StyleSheet.create({
   },
   actionsContainer: {
     alignItems: 'center',
-    gap: SPACING.sm,
+    gap: 6,
+  },
+  guidePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(212, 175, 55, 0.16)',
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 5,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+    borderColor: COLORS.gold,
+    gap: 4,
+  },
+  guideText: {
+    color: COLORS.textGold,
+    fontSize: 12,
+    fontWeight: '700',
   },
   streakBadge: {
     flexDirection: 'row',
