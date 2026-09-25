@@ -451,7 +451,7 @@ Respond ONLY with a JSON object matching this exact schema:
       };
     }
 
-    const creds = CloudPoolService.getBuiltInCloudCredentials();
+    const poolConfig = CloudPoolService.getBuiltInCloudCredentials();
     const effectiveTranscript = cleanTranscript || ayah.uthmaniText;
     const approxSeconds = Math.max(1.5, Math.round((audioBase64.length * 0.75) / 16000 * 10) / 10);
 
@@ -464,71 +464,60 @@ Evaluate the recitation strictly against "${ayah.uthmaniText}" according to Hafs
 Respond ONLY with valid JSON matching schema:
 {"transcribedText":"${effectiveTranscript}","overallScore":94,"accuracyGrade":"excellent","lahnAudit":{"status":"clean","titleAr":"تلاوة متقنة وموافقة للرسم العثماني والرواية 🌟","titleEn":"Accurate Recitation Matching Target Verse","detailAr":"ما شاء الله، الكلمات المنطوقة مطابقة للآية الكريمة مع ضبط مخارج الحروف وأحكام التجويد.","detailEn":"MashaAllah, spoken words accurately match the target verse with proper Makharij and Tajweed timing."},"generalAdviceAr":"استمر على هذا الأداء المتقن مع الحرص على تحقيق مقادير المدود والغنن.","generalAdviceEn":"Keep up this excellent recitation and maintain consistent Madd and Ghunnah counts.","makharijResults":[{"letter":"ح","makhrajZoneAr":"وسط الحلق","makhrajZoneEn":"Middle Throat (Wasat Al-Halq)","status":"passed","commentAr":"مخرج الحاء سليم وصافٍ","commentEn":"Clean articulation from middle throat","anatomicalTipAr":"اضبط تضييق وسط الحلق دون خشونة","anatomicalTipEn":"Narrow the middle throat smoothly"}],"tajweedResults":[{"ruleNameAr":"المد الطبيعي والعارض للسكون","ruleNameEn":"Madd Prolongation","status":"passed","scorePercent":95,"feedbackAr":"مقدار المد متوازن ومضبوط","feedbackEn":"Balanced prolongation timing"}]}`;
 
-    const freeModels = [
-      'nvidia/nemotron-3-super-120b-a12b:free',
-      'openrouter/free',
-      'google/gemma-3-27b-it:free',
-      'meta-llama/llama-3.3-70b-instruct:free',
-    ];
+    try {
+      // 100% Keyless, Anonymous Public AI Endpoint — Uses ZERO developer API keys or accounts
+      const response = await fetch(poolConfig.publicAiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'openai',
+          temperature: 0.1,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
 
-    for (const modelName of freeModels) {
-      if (!creds.openRouterKey) continue;
-      try {
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${creds.openRouterKey}`,
-            'HTTP-Referer': 'https://itqan-tajweed.surge.sh',
-            'X-Title': 'Itqan Tajweed AI',
-          },
-          body: JSON.stringify({
-            model: modelName,
-            temperature: 0.1,
-            messages: [{ role: 'user', content: prompt }],
-          }),
-        });
-
-        if (!response.ok) continue;
+      if (response.ok) {
         const data = await response.json();
         const rawText = data?.choices?.[0]?.message?.content;
-        if (!rawText) continue;
+        if (rawText) {
+          let cleanJson = rawText.trim();
+          const firstBrace = cleanJson.indexOf('{');
+          const lastBrace = cleanJson.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+          }
 
-        let cleanJson = rawText.trim();
-        const firstBrace = cleanJson.indexOf('{');
-        const lastBrace = cleanJson.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+          const parsed = JSON.parse(cleanJson);
+          const transcribed = (parsed.transcribedText || effectiveTranscript).trim();
+
+          return {
+            overallScore: typeof parsed.overallScore === 'number' ? parsed.overallScore : 93,
+            accuracyGrade: parsed.accuracyGrade || 'excellent',
+            ayahEvaluated: ayah,
+            timestamp: new Date().toISOString(),
+            transcribedText: transcribed,
+            lahnAudit: parsed.lahnAudit || {
+              status: 'clean',
+              titleAr: 'تلاوة صحيحة ومتقنة للآية الكريمة 🌟',
+              titleEn: 'Accurate Recitation of Target Verse',
+              detailAr: `تم التحقق من تلاوة الآية الكريمة: "${ayah.uthmaniText}" بنجاح ومخارج الحروف سليمة.`,
+              detailEn: `Verified recitation of "${ayah.uthmaniText}" with accurate Makharij and Tajweed.`,
+            },
+            generalAdviceAr:
+              parsed.generalAdviceAr ||
+              'ما شاء الله، تلاوة طيبة ومتقنة. احرص على الاستمرار في مراعاة أزمنة الغنن والمدود.',
+            generalAdviceEn:
+              parsed.generalAdviceEn ||
+              'MashaAllah, great recitation. Continue maintaining consistent Ghunnah and Madd durations.',
+            makharijResults: Array.isArray(parsed.makharijResults) ? parsed.makharijResults : [],
+            tajweedResults: Array.isArray(parsed.tajweedResults) ? parsed.tajweedResults : [],
+          };
         }
-
-        const parsed = JSON.parse(cleanJson);
-        const transcribed = (parsed.transcribedText || effectiveTranscript).trim();
-
-        return {
-          overallScore: typeof parsed.overallScore === 'number' ? parsed.overallScore : 93,
-          accuracyGrade: parsed.accuracyGrade || 'excellent',
-          ayahEvaluated: ayah,
-          timestamp: new Date().toISOString(),
-          transcribedText: transcribed,
-          lahnAudit: parsed.lahnAudit || {
-            status: 'clean',
-            titleAr: 'تلاوة صحيحة ومتقنة للآية الكريمة 🌟',
-            titleEn: 'Accurate Recitation of Target Verse',
-            detailAr: `تم التحقق من تلاوة الآية الكريمة: "${ayah.uthmaniText}" بنجاح ومخارج الحروف سليمة.`,
-            detailEn: `Verified recitation of "${ayah.uthmaniText}" with accurate Makharij and Tajweed.`,
-          },
-          generalAdviceAr:
-            parsed.generalAdviceAr ||
-            'ما شاء الله، تلاوة طيبة ومتقنة. احرص على الاستمرار في مراعاة أزمنة الغنن والمدود.',
-          generalAdviceEn:
-            parsed.generalAdviceEn ||
-            'MashaAllah, great recitation. Continue maintaining consistent Ghunnah and Madd durations.',
-          makharijResults: Array.isArray(parsed.makharijResults) ? parsed.makharijResults : [],
-          tajweedResults: Array.isArray(parsed.tajweedResults) ? parsed.tajweedResults : [],
-        };
-      } catch (e) {
-        console.warn(`Built-in pool model ${modelName} warning:`, e);
       }
+    } catch (e) {
+      console.warn('Keyless public AI endpoint fallback to local verse rule engine:', e);
     }
 
     // Deterministic Verse-Specific Scholarly Evaluation if OpenRouter is temporarily rate-limited
